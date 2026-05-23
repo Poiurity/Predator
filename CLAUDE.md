@@ -90,6 +90,88 @@ read-only 미러 → 보이스편집 → 4·5번째 위젯 → 성장 애니메 
 
 ---
 
+## Commit Convention (모든 향후 커밋이 따른다)
+
+### 포맷 (Conventional Commits)
+```
+<type>(<scope>): <subject>
+
+[optional body — explain WHY, not how. blank line above. wrap ~72 chars.]
+```
+
+### 하드 룰
+- **English only.** Subject·body·scope 전부 영어. 한국어 금지.
+- **Imperative mood.** "add" not "added", "fix" not "fixed".
+- **Subject ≤ 72자, 소문자 시작, 끝에 마침표 없음.**
+- **★ Claude/AI 서명 금지.** `🤖 Generated with Claude Code`, `Co-Authored-By: Claude`, 어떤 형태의 자동 서명도 추가하지 않음. 커밋 본문만.
+- **One commit = one logical unit.** 작업 단위 끝나면 *즉시* 커밋. 모아서 커밋 금지.
+- **푸시된 커밋에 `--amend` 금지.** 항상 새 커밋.
+- **`--no-verify` 로 훅 우회 금지.**
+
+### Types
+| type | 용도 |
+|---|---|
+| `feat` | 새 기능 |
+| `fix` | 버그 수정 |
+| `refactor` | 내부 구조 변경, 동작 동일 |
+| `perf` | 성능 (60fps, 캐시 히트 등) |
+| `docs` | README, CLAUDE.md, 에이전트 프롬프트, 스펙 |
+| `chore` | deps, .env 템플릿, .gitignore, 기타 |
+| `build` | Vite/Wrangler/번들러 설정 |
+| `ci` | pre-push 훅, scan 스크립트, GH Actions |
+| `style` | 포맷 only (시각 디자인은 `feat(ui)`) |
+| `test` | 테스트 파일 |
+| `revert` | 이전 커밋 되돌리기 |
+
+### Scopes (에이전트 팀 매핑)
+| scope | 영역 |
+|---|---|
+| `sim` | Sim 위젯, MiniChart, safe-math |
+| `gemini` | Gemini SDK, retry, schemas, PREFIX |
+| `voice` | useASR, AbortController, handleUtterance |
+| `security` | Cloudflare Worker, .env, .gitignore, 키 처리 |
+| `fallback` | rehearsed.json, useFallback, announce |
+| `ui` | Motion, 스타일링, 트랜스크립트, 디자인 토큰 |
+| `stage` | App/Stage 셸, Zustand store, 글루 코드 |
+| `submission` | README, 영상 에셋, 제출 폼 문서 |
+| `agents` | `.claude/agents/*.md` |
+| `spec` | `living_stage_spec_v2_3_merged.md` |
+| (생략) | 여러 scope 걸침 / 프로젝트 전체 |
+
+### 커밋 케이던스 (작업 단위 = 즉시 커밋)
+**스펙의 각 검증 게이트(validation gate)를 통과할 때마다 즉시 커밋.** H-block 끝까지 모았다가 한 번에 커밋 금지. 예:
+- `safe-math` 가 `.constructor` 차단 통과 → `feat(sim): add safe-math sandbox with node-type blocklist`
+- 503 retry mock 테스트 통과 → `feat(gemini): add withRetry with abort signal and 4-attempt cap`
+- MiniChart 60fps 확인 → `perf(sim): redraw canvas only when series changes`
+- 에이전트 프롬프트 수정 → `docs(agents): clarify rehearsed.json shape`
+- 의존성 추가 → `chore: add ajv and mathjs deps`
+
+커밋 후엔 가급적 push 도 즉시 (`git push`).
+
+### Good 예시
+```
+feat(sim): add hand-rolled MiniChart with 60-point canvas redraw
+feat(gemini): wire 503 retry with abort signal and 4-attempt cap
+fix(security): exclude VITE_ vars from prod build to prevent key leak
+chore: tighten gitignore env and secret patterns
+docs(agents): align rehearsed.json shape between sim and fallback
+perf(ui): drop will-change after animation completes
+refactor(stage): extract handleUtterance into hooks/useStage
+```
+
+### Bad 예시
+```
+❌ Update files                              # vague
+❌ feat: Add Sim widget.                     # capitalized, period
+❌ feat(sim): Sim 위젯 추가                  # Korean
+❌ WIP                                       # no follow-up
+❌ feat(sim): add Sim
+   🤖 Generated with Claude Code
+   Co-Authored-By: Claude <noreply@...>      # banned signatures
+```
+
+---
+
 ## 빠른 명령
 
 ```bash
