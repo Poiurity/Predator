@@ -315,16 +315,12 @@ export function Stage() {
           }
         };
 
-        // Pass currentScene to callOrchestrator. The parallel agent's updated
-        // signature is: callOrchestrator(text, signal, onHero, currentScene?).
-        // Cast to any until the agent updates gemini.ts — contract is trusted.
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const layout = await (callOrchestrator as any)(
+        const layout = await callOrchestrator(
           utterance,
           sig,
           paintHeroShell,
           currentScene
-        ) as OrchLayout;
+        );
 
         const intent: OrchIntent = layout.intent ?? "fresh";
 
