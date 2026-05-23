@@ -1,9 +1,10 @@
 // Stage — scene orchestration shell (spec §7.3, §8, §9, §15, §16).
 //
 // Owns:
-//   - handleUtterance: abort prior fan-out → orch → commitScene + skeletons
-//     → Promise.all(fill per slot, isolated try/catch)
-//   - useASR wiring (mic → handleUtterance / pre-spawn stub)
+//   - handleUtterance: abort prior orch → orch → intent-driven commit
+//     (fresh/replace: full commitScene; add: appendSlots) → fill fan-out
+//   - onPreSpawn: paints a real skeleton card ≤150ms before orch responds
+//   - useASR wiring (mic → handleUtterance / pre-spawn)
 //   - Text-mode input (always visible; judges may not grant mic permission)
 //   - Scene render: dispatch by widget type, ErrorBoundary per slot
 //   - Transcript footer: committed + interim + cursor, aria-live="polite"
@@ -12,12 +13,14 @@
 //
 // Hard rules (CLAUDE.md / spec):
 //   - No React Context. All state via useLS selectors.
-//   - AbortController created fresh per utterance; prior aborted first.
+//   - orchControllerRef aborted on each new orch call; fills run to completion
+//     with their own AbortController so add-mode fills aren't killed by the
+//     next phrase. On fresh/replace the old controller aborts both orch and fills.
 //   - Per-slot fill errors are isolated — one bad slot does not kill the scene.
 //   - hero index clamped to slots.length-1 before any styling decision.
 //   - interim must accumulate in the store (useASR handles this).
-//   - will-change toggled via data-anim only during animation (data-anim rule
-//     is in index.css — we set/remove the attribute around Motion lifecycle).
+//   - Stale-scene: >8000ms since last commit → treat next utterance as fresh.
+//   - 6-slot cap enforced by appendSlots in store.
 
 import {
   useRef,
@@ -25,12 +28,13 @@ import {
   useDeferredValue,
   useTransition,
   useEffect,
+  useState,
 } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { ulid } from "ulid";
 import { useLS } from "./store";
 import type { WidgetState } from "./store";
-import type { OrchLayout, WidgetType } from "./lib/schemas";
+import type { OrchLayout, OrchIntent, WidgetType, Pos, SlotMeta } from "./lib/schemas";
 import { callOrchestrator, callFill } from "./lib/gemini";
 import { runUtterance, resetFallback } from "./hooks/useFallback";
 import { useASR } from "./hooks/useASR";
@@ -42,7 +46,6 @@ import { Annotate } from "./widgets/Annotate";
 import { Skeleton } from "./widgets/Skeleton";
 import { ErrorBoundary } from "./widgets/ErrorBoundary";
 import { PREFIX_SHA } from "./PREFIX";
-import type { SlotMeta } from "./lib/schemas";
 
 // ── Widget dispatch ────────────────────────────────────────────────────────
 // Each case renders the filled widget content only — the outer WidgetCard
@@ -169,6 +172,19 @@ function WidgetCard({ slotKey, slot, isHero, ws }: WidgetCardProps) {
   );
 }
 
+// ── Pos collision helper ───────────────────────────────────────────────────
+// For pre-spawn skeletons only. Model picks real pos; this just avoids
+// stacking a prespawn on top of an existing slot.
+const CORNER_PREFERENCE: Pos[] = ["TL", "TR", "BL", "BR"];
+
+function pickFreePos(currentSlots: SlotMeta[]): Pos {
+  const used = new Set(currentSlots.map((s) => s.pos));
+  for (const p of CORNER_PREFERENCE) {
+    if (!used.has(p)) return p;
+  }
+  return "CENTER";
+}
+
 // ── Stage component ──────────────────────────────────────────────────────────
 export function Stage() {
   // Selectors — each component/hook only re-renders when its slice changes.
@@ -177,14 +193,35 @@ export function Stage() {
   const transcript = useLS((s) => s.transcript);
   const interimRaw = useLS((s) => s.interim);
   const fallbackMode = useLS((s) => s.fallbackMode);
+  const lastIntent = useLS((s) => s.lastIntent);
   const commitScene = useLS((s) => s.commitScene);
+  const appendSlots = useLS((s) => s.appendSlots);
   const setWidget = useLS((s) => s.setWidget);
+  const setLastIntent = useLS((s) => s.setLastIntent);
 
   // Defer interim rendering so rapid ASR updates don't block the scene.
   const interim = useDeferredValue(interimRaw);
 
-  // Single AbortController ref: new utterance aborts the prior fan-out.
-  const controllerRef = useRef<AbortController | null>(null);
+  // orchControllerRef: aborted before each new orch call.
+  // Fills get their OWN fresh AbortController per batch so add-mode fills
+  // complete even when the next phrase starts a new orch.
+  //
+  // TODO(perf): for fresh/replace intent, abort the previous fill batch too.
+  // Currently they fire-and-forget onto dropped slot keys — the setWidget
+  // calls become no-ops because those keys are gone from the scene (appendSlots
+  // dropped them). Acceptable per spec §8 "유령 카드 0" because the store
+  // simply ignores writes to non-scene keys.
+  const orchControllerRef = useRef<AbortController | null>(null);
+
+  // lastCommitAt: timestamp of the last successful scene commit.
+  // If >8000ms have passed, the next utterance is treated as fresh regardless
+  // of the model's intent (stale-scene timeout, spec §7.3 §3a).
+  const lastCommitAt = useRef<number>(0);
+
+  // Pre-spawn uid tracking: ephemeral skeleton uids that may be replaced
+  // by real orch commits. Stored so we can identify and remove them when
+  // a real scene arrives that makes them redundant.
+  const preSpawnUids = useRef<Set<string>>(new Set());
 
   // startTransition: commitScene batches inside a low-priority transition
   // so skeleton paint doesn't block the browser's main thread.
@@ -217,8 +254,6 @@ export function Stage() {
       }
 
       // Cmd+Shift+L (or Ctrl+Shift+L) → reset fallback, recover live path.
-      // Use this when the network comes back and the presenter wants live again.
-      // data-hotkey: "meta+shift+l"
       if (meta && e.shiftKey && e.key.toLowerCase() === "l") {
         e.preventDefault();
         resetFallback();
@@ -227,14 +262,8 @@ export function Stage() {
       }
 
       // Cmd+Shift+F (or Ctrl+Shift+F) → force fallback immediately.
-      // Lets the presenter demonstrate the fallback story as a deliberate
-      // on-stage beat rather than waiting for an actual failure (spec §11
-      // "정직" — showing the architecture is a value, not a shame).
-      // data-hotkey: "meta+shift+f"
       if (meta && e.shiftKey && e.key.toLowerCase() === "f") {
         e.preventDefault();
-        // runUtterance with a live callback that immediately rejects —
-        // this fires announce() + replay() through the normal fallback path.
         void runUtterance(
           "(forced-fallback-demo)",
           (_t, _sig) => Promise.reject(new Error("forced")),
@@ -248,104 +277,213 @@ export function Stage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── handleUtterance (spec §7.3 + §11) ───────────────────────────────────
-  //
-  // The live callback does the full orch → commitScene → fill fan-out.
-  // It is passed into runUtterance which races it against a 2500ms timeout
-  // and routes to the ordered-index rehearsed replay on any failure.
-  //
-  // Per-slot fill errors are intentionally isolated (one bad fill is not a
-  // stage death) and do NOT propagate to runUtterance's catch — only an
-  // orch-level throw or a 2500ms timeout triggers fallback.
+  // ── handleUtterance (spec §7.3) ──────────────────────────────────────────
   const handleUtterance = useCallback(
     async (text: string) => {
-      // Abort the previous fan-out immediately — late fill callbacks that
-      // arrive after this point must not update the scene.
-      controllerRef.current?.abort("topic-changed");
-      const controller = new AbortController();
-      controllerRef.current = controller;
-      const { signal } = controller;
+      // Abort prior orch (not fills — they run independently per design).
+      orchControllerRef.current?.abort("topic-changed");
+      const orchController = new AbortController();
+      orchControllerRef.current = orchController;
+      const { signal } = orchController;
 
-      // live: the real Gemini path. runUtterance races this against the
-      // fallback timeout — so this MUST resolve as soon as the orchestrator
-      // returns and the scene shell is committed. Fan-out fills then paint
-      // independently in the background; per-slot errors are already
-      // isolated and do not require the orchestration await.
-      //
-      // If we awaited the full Promise.all(fills) here, the typical 3–8s
-      // fan-out latency would lose the timeout race on every utterance and
-      // the stage would replay rehearsed forever. (Observed bug.)
       const live = async (utterance: string, sig: AbortSignal): Promise<void> => {
         const uid = ulid();
 
+        // Read current scene to pass to orch (for add intent). Apply stale-
+        // scene timeout: if >8000ms, pass null to force fresh intent.
+        const stale = Date.now() - lastCommitAt.current > 8000;
+        const currentScene = stale ? null : useLS.getState().scene;
+
         // Early tentative shell: commit a skeleton so the stage doesn't
-        // stay blank while the orchestrator streams.
+        // stay blank while the orchestrator streams. Only for first-ever
+        // scene (currentScene null) to avoid stomping an existing live scene.
         let heroPainted = false;
         const paintHeroShell = (heroIndex: number) => {
           if (heroPainted) return;
           heroPainted = true;
-          const tentative: OrchLayout = {
-            uid,
-            hero: 0,
-            slots: [{ t: "sim", pos: "CENTER", sz: "XL", emp: 3 }],
-          };
-          void heroIndex;
-          startTransition(() => {
-            commitScene(tentative, { [`${uid}:0`]: { status: "skeleton" } });
-          });
+          if (!useLS.getState().scene) {
+            const tentative: OrchLayout = {
+              intent: "fresh",
+              uid,
+              hero: 0,
+              slots: [{ t: "sim", pos: "CENTER", sz: "XL", emp: 3 }],
+            };
+            void heroIndex;
+            startTransition(() => {
+              commitScene(tentative, { [`${uid}:0`]: { status: "skeleton" } });
+            });
+          }
         };
 
-        // Orch failure propagates to runUtterance → triggers fallback.
-        const layout = await callOrchestrator(utterance, sig, paintHeroShell);
+        // Pass currentScene to callOrchestrator. The parallel agent's updated
+        // signature is: callOrchestrator(text, signal, onHero, currentScene?).
+        // Cast to any until the agent updates gemini.ts — contract is trusted.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const layout = await (callOrchestrator as any)(
+          utterance,
+          sig,
+          paintHeroShell,
+          currentScene
+        ) as OrchLayout;
 
-        // Hero index safety: clamp in case the model returned out-of-range.
-        const safeHero = Math.min(
-          layout.hero,
-          Math.max(0, layout.slots.length - 1)
-        );
-        const safeLayout: OrchLayout = { ...layout, uid, hero: safeHero };
+        const intent: OrchIntent = layout.intent ?? "fresh";
 
-        // Build skeleton seeds for every slot.
-        const seeds: Record<string, WidgetState> = {};
-        for (let i = 0; i < safeLayout.slots.length; i++) {
-          seeds[`${uid}:${i}`] = { status: "skeleton" };
-        }
+        // Resolve effective intent: downgrade "add" to "fresh" when there's no
+        // existing scene to append to (defensive against model confusion).
+        const effectiveScene = useLS.getState().scene;
+        const effectiveIntent: OrchIntent =
+          intent === "add" && !effectiveScene ? "fresh" : intent;
 
-        startTransition(() => {
-          commitScene(safeLayout, seeds);
-        });
+        if (effectiveIntent === "fresh" || effectiveIntent === "replace") {
+          // Full scene replacement. Remove pre-spawn skeletons (their uid won't
+          // match the new uid, so AnimatePresence exits them automatically).
+          preSpawnUids.current.clear();
 
-        // Fan-out fill: fire-and-forget. Per-slot errors are isolated and
-        // become Skeleton(error) in place; the scene survives.
-        void Promise.all(
-          safeLayout.slots.map((slot, i) => {
-            const key = `${uid}:${i}`;
-            return callFill(slot, safeLayout, utterance, sig)
-              .then((data) => {
-                setWidget(key, { status: "ready", data });
-              })
-              .catch((err: unknown) => {
-                if ((err as Error)?.name === "AbortError") return; // superseded
-                console.error(`[stage] fill(${slot.t}) slot ${i} failed:`, err);
-                setWidget(key, {
-                  status: "error",
-                  error: String((err as Error)?.message ?? err),
+          const safeHero = Math.min(
+            layout.hero,
+            Math.max(0, layout.slots.length - 1)
+          );
+          const safeLayout: OrchLayout = {
+            ...layout,
+            intent: effectiveIntent,
+            uid,
+            hero: safeHero,
+          };
+
+          const seeds: Record<string, WidgetState> = {};
+          for (let i = 0; i < safeLayout.slots.length; i++) {
+            seeds[`${uid}:${i}`] = { status: "skeleton" };
+          }
+
+          startTransition(() => {
+            commitScene(safeLayout, seeds);
+            setLastIntent(effectiveIntent);
+          });
+          lastCommitAt.current = Date.now();
+
+          // Fan-out fills — each slot gets its own AbortController so they
+          // don't interfere with the next orch call's abort.
+          // TODO: on fresh/replace, we could abort the PREVIOUS fill batch
+          // here. Currently stale fills write to dropped slot keys and are
+          // silently ignored by the store.
+          void Promise.all(
+            safeLayout.slots.map((slot, i) => {
+              const key = `${uid}:${i}`;
+              const fillController = new AbortController();
+              return callFill(slot, safeLayout, utterance, fillController.signal)
+                .then((data) => {
+                  setWidget(key, { status: "ready", data });
+                })
+                .catch((err: unknown) => {
+                  if ((err as Error)?.name === "AbortError") return;
+                  console.error(`[stage] fill(${slot.t}) slot ${i} failed:`, err);
+                  setWidget(key, {
+                    status: "error",
+                    error: String((err as Error)?.message ?? err),
+                  });
                 });
-              });
-          })
-        );
+            })
+          );
+        } else {
+          // intent === "add": grow the existing scene.
+          const base = useLS.getState().scene!; // guarded above
+          const baseIndex = base.slots.length;
+
+          // Determine absolute hero index in the merged array.
+          // If any new slot has emp:3, elect that slot as the new hero.
+          let newHero: number | undefined;
+          for (let i = 0; i < layout.slots.length; i++) {
+            if ((layout.slots[i]!.emp ?? 0) === 3) {
+              newHero = baseIndex + i;
+              break;
+            }
+          }
+          // If model's hero field points to a slot in the new batch with high emp,
+          // also consider it (emp check above takes precedence, but as fallback):
+          if (newHero === undefined && layout.hero < layout.slots.length) {
+            // Only re-elect if the new slot is "important" (emp ≥ 2).
+            const modelHeroSlot = layout.slots[layout.hero];
+            if (modelHeroSlot && (modelHeroSlot.emp ?? 0) >= 2) {
+              newHero = baseIndex + layout.hero;
+            }
+          }
+
+          const seeds: Record<string, WidgetState> = {};
+          for (let i = 0; i < layout.slots.length; i++) {
+            seeds[`${base.uid}:${baseIndex + i}`] = { status: "skeleton" };
+          }
+
+          startTransition(() => {
+            appendSlots(layout.slots, seeds, newHero);
+            setLastIntent("add");
+          });
+          lastCommitAt.current = Date.now();
+
+          // Fan-out fills keyed to the EXISTING scene uid (base.uid).
+          void Promise.all(
+            layout.slots.map((slot, i) => {
+              const key = `${base.uid}:${baseIndex + i}`;
+              const fillController = new AbortController();
+              return callFill(slot, { ...base, slots: [...base.slots, ...layout.slots] }, utterance, fillController.signal)
+                .then((data) => {
+                  setWidget(key, { status: "ready", data });
+                })
+                .catch((err: unknown) => {
+                  if ((err as Error)?.name === "AbortError") return;
+                  console.error(`[stage] fill(${slot.t}) slot ${baseIndex + i} failed:`, err);
+                  setWidget(key, {
+                    status: "error",
+                    error: String((err as Error)?.message ?? err),
+                  });
+                });
+            })
+          );
+        }
       };
 
       // runUtterance handles fallbackMode check, timeout race, announce, replay.
       await runUtterance(text, live, signal);
     },
-    [commitScene, setWidget, startTransition]
+    [commitScene, appendSlots, setWidget, setLastIntent, startTransition]
   );
 
-  // ── Pre-spawn stub (spec §8 — real pre-spawn uid scheme deferred to §11) ──
-  const handlePreSpawn = useCallback((kind: WidgetType) => {
-    console.debug("[prespawn]", kind);
-  }, []);
+  // ── Pre-spawn skeleton paint (spec §8, §7.3 §3d) ─────────────────────────
+  //
+  // Paints a real placeholder card ≤150ms before the orch responds.
+  // onPreSpawn must NOT make a network call.
+  // Pre-spawn skeletons are ephemeral: when a real orch commit arrives with
+  // fresh/replace intent, AnimatePresence exits them (uid mismatch).
+  const handlePreSpawn = useCallback(
+    (kind: WidgetType) => {
+      const puid = `prespawn-${kind}-${ulid()}`;
+      preSpawnUids.current.add(puid);
+
+      const { scene } = useLS.getState();
+
+      startTransition(() => {
+        if (!scene) {
+          // No scene yet — commit a tentative one-slot skeleton.
+          const tentative: OrchLayout = {
+            intent: "fresh",
+            uid: puid,
+            hero: 0,
+            slots: [{ t: kind, pos: "CENTER", sz: "M", emp: 1 }],
+          };
+          commitScene(tentative, { [`${puid}:0`]: { status: "skeleton" } });
+        } else {
+          // Scene exists — append a small skeleton in a free corner.
+          const freePos = pickFreePos(scene.slots);
+          const slot: SlotMeta = { t: kind, pos: freePos, sz: "S", emp: 1 };
+          const baseIndex = scene.slots.length;
+          appendSlots(
+            [slot],
+            { [`${scene.uid}:${baseIndex}`]: { status: "skeleton" } }
+          );
+        }
+      });
+    },
+    [commitScene, appendSlots, startTransition]
+  );
 
   // ── Wire ASR ──────────────────────────────────────────────────────────────
   useASR(handleUtterance, handlePreSpawn);
@@ -364,13 +502,24 @@ export function Stage() {
     [handleUtterance]
   );
 
+  // ── Growing indicator label ───────────────────────────────────────────────
+  const statusLabel = fallbackMode
+    ? "rehearsed"
+    : lastIntent === "add"
+    ? "live · growing"
+    : "live";
+
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div className="stage">
       <header className="stage-header">
         <h1>Living Stage</h1>
-        <span className="stage-tag">
-          {fallbackMode ? "rehearsed" : "live"}
+        <span
+          className="stage-tag"
+          data-intent={lastIntent ?? "none"}
+          data-fallback={fallbackMode ? "true" : undefined}
+        >
+          {statusLabel}
         </span>
       </header>
 
