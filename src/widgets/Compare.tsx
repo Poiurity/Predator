@@ -24,8 +24,10 @@ function CompareInner({ title, data }: Props) {
           <div className="compare-cell compare-cell-a">{a}</div>
           <div className="compare-cell compare-cell-b">{b}</div>
         </div>
-        {rows.map((row) => (
-          <div key={row.k} className="compare-row">
+        {rows.map((row, idx) => (
+          // row.k may be undefined or duplicated during partial streaming;
+          // fall back to index so React's key warning stays clean.
+          <div key={row.k || `row-${idx}`} className="compare-row">
             <div className="compare-key">{row.k}</div>
             <div
               className="compare-cell compare-cell-a"
