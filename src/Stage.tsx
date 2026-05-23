@@ -32,6 +32,7 @@ import { useLS } from "./store";
 import type { WidgetState } from "./store";
 import type { OrchLayout, WidgetType } from "./lib/schemas";
 import { callOrchestrator, callFill } from "./lib/gemini";
+import { runUtterance, resetFallback } from "./hooks/useFallback";
 import { useASR } from "./hooks/useASR";
 import { Sim } from "./widgets/Sim";
 import { Plot } from "./widgets/Plot";
@@ -199,9 +200,12 @@ export function Stage() {
     });
   }, []);
 
-  // ── "/" hotkey → focus text input ────────────────────────────────────────
+  // ── Keyboard hotkeys ─────────────────────────────────────────────────────
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      const meta = e.metaKey || e.ctrlKey;
+
+      // "/" → focus text input
       if (
         e.key === "/" &&
         !(e.target instanceof HTMLInputElement) &&
@@ -209,87 +213,123 @@ export function Stage() {
       ) {
         e.preventDefault();
         textInputRef.current?.focus();
+        return;
+      }
+
+      // Cmd+Shift+L (or Ctrl+Shift+L) → reset fallback, recover live path.
+      // Use this when the network comes back and the presenter wants live again.
+      // data-hotkey: "meta+shift+l"
+      if (meta && e.shiftKey && e.key.toLowerCase() === "l") {
+        e.preventDefault();
+        resetFallback();
+        useLS.getState().clearScene();
+        return;
+      }
+
+      // Cmd+Shift+F (or Ctrl+Shift+F) → force fallback immediately.
+      // Lets the presenter demonstrate the fallback story as a deliberate
+      // on-stage beat rather than waiting for an actual failure (spec §11
+      // "정직" — showing the architecture is a value, not a shame).
+      // data-hotkey: "meta+shift+f"
+      if (meta && e.shiftKey && e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        // runUtterance with a live callback that immediately rejects —
+        // this fires announce() + replay() through the normal fallback path.
+        void runUtterance(
+          "(forced-fallback-demo)",
+          (_t, _sig) => Promise.reject(new Error("forced")),
+          new AbortController().signal
+        );
+        return;
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── handleUtterance (spec §7.3) ──────────────────────────────────────────
+  // ── handleUtterance (spec §7.3 + §11) ───────────────────────────────────
+  //
+  // The live callback does the full orch → commitScene → fill fan-out.
+  // It is passed into runUtterance which races it against a 2500ms timeout
+  // and routes to the ordered-index rehearsed replay on any failure.
+  //
+  // Per-slot fill errors are intentionally isolated (one bad fill is not a
+  // stage death) and do NOT propagate to runUtterance's catch — only an
+  // orch-level throw or a 2500ms timeout triggers fallback.
   const handleUtterance = useCallback(
     async (text: string) => {
-      const uid = ulid();
-
       // Abort the previous fan-out immediately — late fill callbacks that
-      // arrive after this point must not update the scene (uid mismatch
-      // guard is inside the Promise.all below).
+      // arrive after this point must not update the scene.
       controllerRef.current?.abort("topic-changed");
       const controller = new AbortController();
       controllerRef.current = controller;
       const { signal } = controller;
 
-      // Early tentative shell: commit an empty scene so the stage doesn't
-      // stay blank while orch streams. Overwritten with real slots below.
-      let heroPainted = false;
-      const paintHeroShell = (heroIndex: number) => {
-        if (heroPainted) return;
-        heroPainted = true;
-        const tentative: OrchLayout = {
-          uid,
-          hero: 0,
-          slots: [{ t: "sim", pos: "CENTER", sz: "XL", emp: 3 }],
+      // live: the real Gemini path. runUtterance races this against 2500ms.
+      const live = async (utterance: string, sig: AbortSignal): Promise<void> => {
+        const uid = ulid();
+
+        // Early tentative shell: commit a skeleton so the stage doesn't
+        // stay blank while the orchestrator streams.
+        let heroPainted = false;
+        const paintHeroShell = (heroIndex: number) => {
+          if (heroPainted) return;
+          heroPainted = true;
+          const tentative: OrchLayout = {
+            uid,
+            hero: 0,
+            slots: [{ t: "sim", pos: "CENTER", sz: "XL", emp: 3 }],
+          };
+          void heroIndex;
+          startTransition(() => {
+            commitScene(tentative, { [`${uid}:0`]: { status: "skeleton" } });
+          });
         };
-        void heroIndex;
+
+        // Orch failure propagates to runUtterance → triggers fallback.
+        const layout = await callOrchestrator(utterance, sig, paintHeroShell);
+
+        // Hero index safety: clamp in case the model returned out-of-range.
+        const safeHero = Math.min(
+          layout.hero,
+          Math.max(0, layout.slots.length - 1)
+        );
+        const safeLayout: OrchLayout = { ...layout, uid, hero: safeHero };
+
+        // Build skeleton seeds for every slot.
+        const seeds: Record<string, WidgetState> = {};
+        for (let i = 0; i < safeLayout.slots.length; i++) {
+          seeds[`${uid}:${i}`] = { status: "skeleton" };
+        }
+
         startTransition(() => {
-          commitScene(tentative, { [`${uid}:0`]: { status: "skeleton" } });
+          commitScene(safeLayout, seeds);
         });
+
+        // Fan-out fill: per-slot errors are isolated — one bad slot does not
+        // kill the scene and does NOT trigger fallback (spec §7.3).
+        await Promise.all(
+          safeLayout.slots.map((slot, i) => {
+            const key = `${uid}:${i}`;
+            return callFill(slot, safeLayout, utterance, sig)
+              .then((data) => {
+                setWidget(key, { status: "ready", data });
+              })
+              .catch((err: unknown) => {
+                if ((err as Error)?.name === "AbortError") return; // superseded
+                console.error(`[stage] fill(${slot.t}) slot ${i} failed:`, err);
+                setWidget(key, {
+                  status: "error",
+                  error: String((err as Error)?.message ?? err),
+                });
+              });
+          })
+        );
       };
 
-      let layout: OrchLayout;
-      try {
-        layout = await callOrchestrator(text, signal, paintHeroShell);
-      } catch (err) {
-        if ((err as Error)?.name === "AbortError") return; // superseded
-        console.error("[stage] orchestrator failed:", err);
-        // TODO §11 — wire useFallback.announce() + replay(nextScriptIndex()) here.
-        return;
-      }
-
-      // Hero index safety: clamp in case the model returned out-of-range.
-      const safeHero = Math.min(
-        layout.hero,
-        Math.max(0, layout.slots.length - 1)
-      );
-      const safeLayout: OrchLayout = { ...layout, uid, hero: safeHero };
-
-      // Build skeleton seeds for every slot.
-      const seeds: Record<string, WidgetState> = {};
-      for (let i = 0; i < safeLayout.slots.length; i++) {
-        seeds[`${uid}:${i}`] = { status: "skeleton" };
-      }
-
-      startTransition(() => {
-        commitScene(safeLayout, seeds);
-      });
-
-      // Fan-out fill: each slot lives or dies independently.
-      await Promise.all(
-        safeLayout.slots.map((slot, i) => {
-          const key = `${uid}:${i}`;
-          return callFill(slot, safeLayout, text, signal)
-            .then((data) => {
-              setWidget(key, { status: "ready", data });
-            })
-            .catch((err: unknown) => {
-              if ((err as Error)?.name === "AbortError") return; // superseded
-              console.error(`[stage] fill(${slot.t}) slot ${i} failed:`, err);
-              setWidget(key, {
-                status: "error",
-                error: String((err as Error)?.message ?? err),
-              });
-            });
-        })
-      );
+      // runUtterance handles fallbackMode check, timeout race, announce, replay.
+      await runUtterance(text, live, signal);
     },
     [commitScene, setWidget, startTransition]
   );
