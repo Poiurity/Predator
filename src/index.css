@@ -105,3 +105,115 @@ html, body, #root {
   font-size: 0.8125rem;
   letter-spacing: 0.01em;
 }
+
+/* ─── Sim widget ──────────────────────────────────────────────────── */
+
+.sim-widget {
+  display: flex;
+  flex-direction: column;
+  gap: 0.875rem;
+  max-width: 720px;
+}
+
+.card-title {
+  font-size: 0.8125rem;
+  color: var(--fg-dim);
+  letter-spacing: 0.02em;
+  text-transform: lowercase;
+}
+
+.minichart {
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 4px;
+}
+
+.sim-slider-row {
+  display: grid;
+  grid-template-columns: 6rem 1fr 6rem;
+  align-items: center;
+  gap: 0.875rem;
+}
+
+.sim-slider-row label {
+  font-size: 0.8125rem;
+  color: var(--fg-dim);
+  letter-spacing: 0.02em;
+}
+
+.sim-slider-row input[type="range"] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.sim-value {
+  font-size: 0.875rem;
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.sim-readouts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0.5rem;
+  padding-top: 0.625rem;
+  border-top: 1px solid var(--grid);
+}
+
+.sim-readout {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  padding: 0.5rem 0.75rem;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid transparent;
+  border-radius: 4px;
+}
+
+.sim-readout[data-current="true"] {
+  background: rgba(205, 214, 224, 0.06);
+  border-color: rgba(205, 214, 224, 0.18);
+}
+
+.sim-readout-name {
+  font-size: 0.6875rem;
+  color: var(--fg-dim);
+  letter-spacing: 0.02em;
+}
+
+.sim-readout-value {
+  font-size: 1rem;
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ─── Skeleton (loading / widget error fallback) ──────────────────── */
+
+.card-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  opacity: 0.7;
+}
+
+.skeleton-bar {
+  height: 8px;
+  width: 100%;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 2px;
+  animation: skeleton-pulse 1.6s ease-in-out infinite;
+}
+.skeleton-bar.w-3-4 { width: 75%; }
+.skeleton-bar.w-half { width: 50%; }
+
+.skeleton-message {
+  margin-top: 0.5rem;
+  font-size: 0.75rem;
+  color: var(--warn);
+  letter-spacing: 0.02em;
+}
+
+@keyframes skeleton-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.85; }
+}
