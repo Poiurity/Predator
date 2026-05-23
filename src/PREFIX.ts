@@ -31,6 +31,12 @@ import {
   PATCH_SCHEMA,
 } from "./lib/schemas";
 
+// ── Known-good SHA (dormant fail-loud per §10) ────────────────────────
+// Filled by the dry-run step that captures a rehearsed PREFIX_SHA. Stays
+// empty in main; when non-empty we compare on boot and scream if the
+// computed SHA differs (cache will miss, padding may be drifting, etc.).
+const KNOWN_GOOD_SHA = "";
+
 // ── System framing ────────────────────────────────────────────────────
 const SYSTEM = `# Living Stage — Model Brief
 
@@ -294,12 +300,21 @@ async function computeSha(s: string): Promise<string> {
 
 export const PREFIX_SHA: Promise<string> = computeSha(PREFIX);
 
-// Boot log — only in browser to avoid noisy test output.
+// Boot log — only in browser to avoid noisy test output. When
+// KNOWN_GOOD_SHA is non-empty and the computed SHA disagrees, scream
+// loudly: the prefix has drifted from the captured baseline and the
+// implicit cache will miss on every utterance (spec §10).
 if (typeof window !== "undefined") {
   void PREFIX_SHA.then((sha) => {
     // eslint-disable-next-line no-console
     console.info(
       `[prefix] sha=${sha} bytes=${PREFIX.length} padded=${ENABLE_PADDING_LEVER}`
     );
+    if (KNOWN_GOOD_SHA && KNOWN_GOOD_SHA !== sha) {
+      // eslint-disable-next-line no-console
+      console.error(
+        `[prefix] SHA MISMATCH — known-good was ${KNOWN_GOOD_SHA}, current is ${sha}. Cache will miss.`
+      );
+    }
   });
 }
