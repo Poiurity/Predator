@@ -1,170 +1,184 @@
 # Living Stage
 
-**Presenter speaks. Interactive visuals grow on stage at speech speed. The hero is a live Sim widget — drag a slider, the hand-rolled canvas chart reacts in real time at 60 fps. Prepared slides disappear. Say it and it appears. Touch it and it responds.**
+Speak, and the slide grows.
 
-Live demo: https://predator-635265297806.us-central1.run.app/
-(Valid during judging period — temporary account key expires after judging. See "How to run" for self-hosting.)
+A voice-driven presentation surface that builds interactive visualizations in
+real time as the presenter speaks. The stage's centerpiece is an interactive
+**Sim** widget — a live mathematical model with sliders that re-evaluate at
+60fps as the speaker drags them. Around it, supporting widgets (charts, flow
+diagrams, comparisons, annotated notes) grow into place phrase by phrase
+while the presenter talks.
 
-Submission frozen at `git tag submission` — commit `0e858354b98a22bc5836b8331805262dc8a9a530`.
+Built for the 2026 Google I/O Hackathon. Live demo:
+**https://predator-635265297806.us-central1.run.app/**
 
 ---
 
-## Why it is different
+## What it does
 
-- **Pure runtime generation, not retrieval.** Every widget is generated fresh from your speech — no slide deck, no pre-authored content, no retrieval-augmented lookup.
-- **Incremental scene growth via `intent: add`.** A conjunction ("also", "and then") grows the stage rather than replacing it. The model tracks the current scene context and appends.
-- **Self-correcting transcript.** `callPolish` runs Gemini on your raw ASR output so "Moto" becomes "Model" in the display before the next utterance fires.
-- **Five widget types, not one.** Sim (live reactive model), Plot (time-series), Compare (ranked rows), Flow (auto-layout SVG cycle-safe graph), Annotate (KaTeX LaTeX). Each fills progressively as bytes stream.
-- **The hero is touchable.** Sim sliders drive a hand-rolled canvas chart at 10 Hz without a single recharts re-render. That is the definition of the demo.
+1. **You speak (or type).** The browser's Web Speech API streams interim
+   transcript; phrase boundaries (300 ms silence, commas, conjunctions) fire
+   incremental orchestrator calls.
+2. **The model decides what to show.** Gemini 3.5 Flash returns a structured
+   JSON layout (`{ intent, hero, slots, uid }`). `intent` ∈
+   `{fresh, add, replace}` lets short follow-up phrases _add_ to the existing
+   scene instead of replacing it — so the stage grows as the talk unfolds.
+3. **Widgets fill in parallel, streaming.** Each slot's content arrives as
+   Gemini streams JSON; a partial-JSON parser pushes intermediate shapes to
+   the widgets so the audience sees data appearing as it's generated.
+4. **The transcript self-corrects.** A second, cheap model call polishes the
+   raw ASR output every ~600 ms, so earlier words get re-interpreted when
+   later context arrives ("Moto mortgage" → "Model mortgage").
+5. **Resilience.** Any utterance that does not return a valid scene within
+   4 s falls back to an ordered rehearsed capture, announced both by TTS and
+   a banner — no pretending the live model is up when it isn't.
 
 ---
 
 ## Architecture
 
 ```
-Browser (React 19 + Vite)
-  |
-  | same-origin /v1beta/* requests (no CORS, key never in bundle)
-  |
-Cloud Run single container
-  ├── server.js  — Express: serves dist/ static AND proxies /v1beta/* to Gemini
-  |                GEMINI_API_KEY lives here only (Cloud Run env var / Secret Manager)
-  |
-  └──> Gemini Developer API
-         model: gemini-3.5-flash
-         thinking: MINIMAL (orch/patch) | LOW (fill)
-         no temperature / top_p / top_k
-         responseJsonSchema + AJV client-side double validation
-         4500-token byte-stable PREFIX cache (3300-3800 cached tokens verified live)
+ Browser (Vite build)
+   ├── Web Speech API → useASR → store.transcript / interim
+   ├── handleUtterance (Stage.tsx)
+   │     ├── callOrchestrator → intent + slots
+   │     ├── callFill ×N (parallel, streaming JSON)
+   │     └── callPolish (debounced, async)
+   │
+   ▼  POST /v1beta/...  (same-origin)
+ Cloud Run (server.js, single container)
+   ├── serves dist/  (static)
+   └── proxies /v1beta/* to generativelanguage.googleapis.com
+        ↑ injects GEMINI_API_KEY from service env var
+          (key never present in the browser bundle)
 ```
 
-Key boundary: `GEMINI_API_KEY` never enters the browser bundle. The proxy overwrites the `?key=` query param server-side. `git grep -nE 'AIza[0-9A-Za-z_-]{20,}'` must return zero results before any push.
+Single-origin design means CORS-free, key-tight: the bundle never sees the
+key, and a `git grep -nE 'AIza[0-9A-Za-z_-]{20,}'` pre-push scan is part of
+the workflow.
 
 ---
 
-## What we built today
+## Widgets
 
-Everything below was written from scratch on race day. The model generates widget selection and variable/relation data only — all runtime logic is hand-written.
+| Widget   | Role                       | Renderer                  |
+|----------|----------------------------|---------------------------|
+| Sim      | Hero — interactive model   | Hand-rolled `<canvas>` chart, `mathjs`-sandboxed expressions, local React state (slider drag never re-renders other widgets) |
+| Plot     | Static charts              | `recharts`                |
+| Compare  | Two-column comparison      | CSS grid                  |
+| Flow     | Nodes + edges              | Hand-rolled SVG, cycle-safe BFS auto-layout |
+| Annotate | Note with optional formula | KaTeX-rendered LaTeX      |
 
-- **Reactive runtime** — Zustand store with scene commit, `appendSlots` for incremental growth, AbortController fan-out (one controller per phrase), intent-driven dispatch (`fresh` / `add` / `replace`).
-- **Five widget types**
-  - `Sim.tsx` — hero widget: mathjs safe-eval, slider bindings, hand-rolled `<canvas>` MiniChart, 60-point redraw, 10 Hz drag reactive.
-  - `MiniChart.tsx` — canvas-only chart, no recharts dependency, deterministic redraw on series change.
-  - `Plot.tsx` — recharts LineChart for static time-series output (permitted per spec — only the hero Sim chart must be hand-rolled).
-  - `Compare.tsx` — ranked rows with leaning indicator, partial-stream tolerant (null-safe keys).
-  - `Flow.tsx` — SVG auto-layout directed graph, cycle-safe DFS, null-safe labels during partial streaming.
-  - `Annotate.tsx` — KaTeX LaTeX rendering with plain-text fallback.
-- **Voice-to-growth pipeline** — `useASR.ts`: Web Speech `onend` restart loop (survives browser-side restarts), interim token accumulation in Zustand store (not inside the SpeechRecognition instance, so it survives restarts), 300ms silence + comma/conjunction phrase-boundary triggers, diff-firing (only the new slice of the interim is sent, not the whole transcript).
-- **LLM transcript polish** — `useTranscriptPolish.ts` + `callPolish`: async Gemini call that context-corrects raw ASR output; polished string drives the footer display.
-- **Sim widget internal reactive engine** — variable/relation schema evaluation, `compileRels` + `evalRel` via mathjs AST, slider binding to derived values, hand-rolled 60-point MiniChart canvas redraw only when series changes.
-- **Partial-JSON streaming** — `callFill` pushes `Partial<FilledWidget>` on each chunk via `partial-json`; widgets render progressively; cyan pulse indicator shows in-flight cards; AJV validates the final parse only.
-- **503 exponential backoff retry** — `retry.ts`: max 4 attempts, per-attempt jitter, AbortController-aware (immediately aborts on signal, does not sleep through abort during backoff).
-- **Fallback system (spec §11)** — 4000 ms timeout race per phrase → `announce()` (TTS + amber banner, no cosplay) → `useFallback.ts` ordered-index replay from `rehearsed.json` covering all five widget types. `Cmd+Shift+F` forces fallback for demo, `Cmd+Shift+L` resets.
-- **Cloud Run single-container deployment** — `server.js` (Express): serves `dist/` static files AND proxies `/v1beta/*` to Gemini. `Dockerfile` multi-stage Node 20 Alpine build. `.env` / `.gitignore` / `.dockerignore` / `.gcloudignore` configured from day one.
-- **safe-math sandbox** — `safe-math.ts`: mathjs `parse()` AST walk, node-type blocklist (SymbolNode constructor/prototype/etc., FunctionNode against fn-name whitelist), expression string validated before compile.
-- **AJV defense-in-depth** — same JSON schema sent as `responseJsonSchema` AND compiled with AJV and run client-side on every parsed response. `GeminiValidationError` typed throw on failure.
-- **4500-token byte-stable PREFIX cache** — `PREFIX.ts`: SHA boot log, all schemas inlined via `JSON.stringify`, utterance/slot/uid appended after the prefix boundary. Live cache hit 3300-3800 `cachedContentTokenCount` verified.
-- **Boot SHA fail-loud** — known-good SHA constant; if the prefix drifts on deploy, the console error is immediate and loud.
-- **Text input toggle** — `/` opens text input, `Esc` closes; `useASR` gracefully no-ops when mic permission is denied.
-- **110 passing tests** — `vitest` covering retry classification, safe-math AST blocklist, AJV schema validation, fallback timeout/abort, store slices, and rehearsed.json shape.
-- **Motion FLIP grow animation** — `motion/react` for card entrance; glass card dark stage aesthetic.
+Each slot is wrapped in a per-widget `ErrorBoundary`, so a single
+malformed fill never collapses the scene.
 
 ---
 
-## Hard rules we followed
+## Hard rules baked into the system
 
-| Rule | Value |
-|---|---|
-| Model ID | `gemini-3.5-flash` (NOT `gemini-3-flash-preview`) |
-| thinking level | `MINIMAL` (orch/patch) / `LOW` (fill) — NEVER medium/high (TTFT death at ~20 s) |
-| temperature / top_p / top_k | Not sent — Gemini 3.x defaults preferred |
-| tools array | Not sent — silent-miss avoidance |
-| Sim initial value key | `v0` (NOT `v`) |
-| Hero chart | Hand-rolled `<canvas>` (recharts only for static Plot — 10 Hz drag + recharts = jank) |
-| Key boundary | Cloud Run env var only; never in bundle; same-origin proxy; `npm run scan:keys` in CI |
+- **Model:** `gemini-3.5-flash` (the post-launch GA — not the stale
+  `gemini-3-flash-preview` quickstart).
+- **`thinkingLevel`:** `MINIMAL` for orchestrator and polish, `LOW` for fill.
+  Higher levels are never sent (TTFT inflation kills live demos).
+- **No `temperature` / `top_p` / `top_k`** — the 3.x defaults are the
+  recommended path; tuning them down trips repetition.
+- **No `tools` array** — implicit cache treats the first call with `tools`
+  as a different prefix and silently misses.
+- **`v0`, not `v`,** is the initial-value key on every sim variable.
+- **Hero chart is hand-rolled `<canvas>`,** not `recharts`. 10 Hz slider
+  drags through `recharts` blow the 60 fps budget.
+- **Same-origin only.** The browser never speaks to
+  `generativelanguage.googleapis.com` directly.
+- **503 retry with abort:** four exponential-backoff attempts with jitter;
+  aborts immediately on a new utterance so superseded calls cancel cleanly.
+- **Defense-in-depth validation:** every fill is sent with a
+  `responseJsonSchema` AND re-validated with AJV after parse.
+- **Honest fallback:** rehearsed replay announces itself with TTS + visible
+  banner. No cosplay of live behavior.
 
 ---
 
-## How to run
+## Running it
 
-### Deployed (recommended during judging)
+### Hosted
 
-Open https://predator-635265297806.us-central1.run.app/
+Just open https://predator-635265297806.us-central1.run.app/. The page is the
+demo.
 
-- Grant microphone permission when prompted.
-- Speak a sentence describing what to model. The stage grows.
-- Drag sliders in the Sim widget to explore the live model.
-- If mic is unavailable: press `/` to open text input, type a prompt, press Enter.
-
-Hotkeys:
-- `/` — toggle text input
-- `Esc` — close text input
-- `Cmd+Shift+F` — force fallback demo (rehearsed.json replay with TTS + amber banner)
-- `Cmd+Shift+L` — reset stage
-
-Note: the deployed service uses a temporary API key that is valid during the judging period. This key is held in Cloud Run environment variables and is not present in this repository.
-
-### Self-hosted (local dev)
+### Local
 
 ```bash
 npm install
-
-# Terminal 1 — Gemini proxy (requires GEMINI_API_KEY)
-GEMINI_API_KEY=your_key node server.js
-
-# Terminal 2 — Vite dev server (proxies /v1beta to :8080)
-npm run dev
-# Open http://localhost:5173
 ```
 
-Or point Vite at the deployed Cloud Run service directly:
+Two terminals:
 
 ```bash
-VITE_DEV_PROXY=https://predator-635265297806.us-central1.run.app npm run dev
+# 1. proxy + static server (needs the key)
+GEMINI_API_KEY=AIza... node server.js   # listens on :8080
 ```
 
-### Tests / type-check / key scan
-
 ```bash
-npm test            # 110 tests, ~1.6 s
-npm run typecheck   # tsc --noEmit
-npm run scan:keys   # git grep for key patterns — must return 0 matches
+# 2. Vite dev server (proxies /v1beta/* to :8080)
+npm run dev                              # listens on :5173
 ```
 
-### Deploy to Cloud Run
+Then open http://localhost:5173. The text input is hidden by default —
+press **`/`** to open it, **Esc** to close. The mic listens continuously
+once granted.
+
+**Demo hotkeys**
+
+| Key            | Action |
+|----------------|--------|
+| `/`            | Open text input |
+| `Esc`          | Close text input |
+| `Cmd+Shift+F`  | Force fallback path (for showing the resilience story) |
+| `Cmd+Shift+L`  | Recover from fallback back to live |
+
+---
+
+## Tech stack
+
+- **Frontend:** React 19, TypeScript, Vite 6, Zustand for state, Motion (Framer)
+  for FLIP transitions, `mathjs` for sandboxed sim expressions, `partial-json`
+  for streaming JSON, `recharts` for static plots, KaTeX for LaTeX.
+- **Backend:** Node 20 single container on Cloud Run. ~140 lines of
+  `server.js` — serves `dist/` and proxies `/v1beta/*` to the Gemini
+  Developer API.
+- **Model:** Gemini 3.5 Flash via `@google/genai` v2.6, streaming structured
+  output, ~4 500-token byte-stable prefix verified cache-hitting at
+  ~3 300–3 800 tokens per call.
+- **Tests:** 110 unit/integration tests via Vitest covering retry,
+  safe-math, schemas, fallback, store, and the rehearsed capture.
+
+---
+
+## Commands
 
 ```bash
-npm run deploy
-# Uses gcloud run deploy --source . (Cloud Build multi-stage Dockerfile)
-# Set CR_SERVICE and CR_REGION env vars to override defaults.
+npm run dev          # Vite on :5173 (needs node server.js on :8080)
+npm run build        # tsc --noEmit && vite build
+npm run typecheck    # tsc --noEmit
+npm test             # 110 tests via vitest
+npm run scan:keys    # pre-push key-leak grep (must print ✅)
+npm run start        # production server (node server.js)
+npm run deploy       # gcloud run deploy (auto-detects Dockerfile)
 ```
 
 ---
 
-## Stack
+## Submission
 
-| Dependency | Version | Role |
-|---|---|---|
-| `@google/genai` | ^2.6.0 | Gemini SDK (structured output, streaming) |
-| `react` / `react-dom` | ^19.0.0 | UI |
-| `zustand` | ^5.0.0 | State (no React Context) |
-| `motion` | ^12.0.0 | FLIP grow animation |
-| `recharts` | ^2.13.0 | Plot widget (static chart only) |
-| `mathjs` | ^14.0.0 | safe-math AST sandbox for Sim expressions |
-| `ajv` | ^8.17.1 | JSON schema validation (client-side, defense-in-depth) |
-| `partial-json` | ^0.1.7 | Progressive widget fill from streaming bytes |
-| `katex` | ^0.17.0 | LaTeX rendering in Annotate widget |
-| `ulid` | ^2.3.0 | Widget slot IDs |
-| `vite` | ^6.0.0 | Build / dev server |
-| `vitest` | ^4.1.7 | Test runner |
-| `typescript` | ^5.6.3 | Type checking |
+Code is frozen at git tag `submission`.
+
+```bash
+git checkout submission   # reproduce the exact demo state
+```
 
 ---
 
-## Submission info
+## License
 
-- Submission frozen at `git tag submission` (commit `0e858354b98a22bc5836b8331805262dc8a9a530`)
-- Submitted to: cerebralvalley.ai/e/google-io-hackathon/hackathon/submit
-- GitHub: https://github.com/Poiurity/Predator
-
-**Note on judging-period access:** The deployed URL above uses a temporary account API key configured as a Cloud Run environment variable. This key is valid during the judging period. It is not present in this repository (`npm run scan:keys` returns zero matches). Judges who want to run the project locally will need to supply their own `GEMINI_API_KEY`.
+This repository is the submission artifact for the 2026 Google I/O Hackathon.
+All rights reserved unless a `LICENSE` file is added later.
