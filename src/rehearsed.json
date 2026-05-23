@@ -1,0 +1,263 @@
+[
+  {
+    "i": 0,
+    "utterance": "Model the effect of interest rate on monthly mortgage payment",
+    "scene": {
+      "uid": "REHEARSED-00",
+      "hero": 0,
+      "slots": [
+        { "t": "sim", "pos": "CENTER", "sz": "XL", "emp": 3 }
+      ]
+    },
+    "widgets": {
+      "REHEARSED-00:0": {
+        "status": "ready",
+        "data": {
+          "t": "sim",
+          "title": "Monthly mortgage payment ($)",
+          "data": {
+            "vars": [
+              {
+                "n": "p",
+                "v0": 400000,
+                "min": 50000,
+                "max": 1000000,
+                "step": 10000,
+                "unit": "$"
+              },
+              {
+                "n": "rate",
+                "v0": 5,
+                "min": 1,
+                "max": 12,
+                "step": 0.1,
+                "unit": "%",
+                "slider": true
+              }
+            ],
+            "rels": [
+              {
+                "lhs": "monthly",
+                "expr": "p * rate / 1200 / (1 - (1 + rate/1200)^(-360))"
+              },
+              {
+                "lhs": "totalInterest",
+                "expr": "monthly * 360 - p"
+              }
+            ],
+            "chart": { "x": "rate", "y": "monthly", "scale": "lin" }
+          }
+        }
+      }
+    }
+  },
+  {
+    "i": 1,
+    "utterance": "Show GDP of South Korea and Japan from 2010 to 2024",
+    "scene": {
+      "uid": "REHEARSED-01",
+      "hero": 0,
+      "slots": [
+        { "t": "plot", "pos": "CENTER", "sz": "XL", "emp": 3 }
+      ]
+    },
+    "widgets": {
+      "REHEARSED-01:0": {
+        "status": "ready",
+        "data": {
+          "t": "plot",
+          "title": "GDP — South Korea vs Japan (USD trillion)",
+          "data": {
+            "k": "line",
+            "x": "Year",
+            "y": "GDP (USD trillion)",
+            "scale": "lin",
+            "series": [
+              {
+                "n": "South Korea",
+                "pts": [
+                  [2010, 1.09], [2011, 1.20], [2012, 1.22], [2013, 1.31],
+                  [2014, 1.41], [2015, 1.38], [2016, 1.41], [2017, 1.53],
+                  [2018, 1.72], [2019, 1.65], [2020, 1.64], [2021, 1.80],
+                  [2022, 1.67], [2023, 1.71], [2024, 1.76]
+                ]
+              },
+              {
+                "n": "Japan",
+                "pts": [
+                  [2010, 5.70], [2011, 6.16], [2012, 6.20], [2013, 5.16],
+                  [2014, 4.85], [2015, 4.39], [2016, 4.92], [2017, 4.87],
+                  [2018, 5.04], [2019, 5.12], [2020, 5.06], [2021, 4.94],
+                  [2022, 4.23], [2023, 4.21], [2024, 4.11]
+                ]
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  {
+    "i": 2,
+    "utterance": "Compare 15-year versus 30-year fixed mortgage on rate, monthly payment, total interest, and flexibility",
+    "scene": {
+      "uid": "REHEARSED-02",
+      "hero": 0,
+      "slots": [
+        { "t": "compare", "pos": "CENTER", "sz": "XL", "emp": 3 }
+      ]
+    },
+    "widgets": {
+      "REHEARSED-02:0": {
+        "status": "ready",
+        "data": {
+          "t": "compare",
+          "title": "15-year vs 30-year fixed mortgage ($400k)",
+          "data": {
+            "a": "15-year fixed",
+            "b": "30-year fixed",
+            "rows": [
+              {
+                "k": "Interest rate (typical)",
+                "av": "6.2%",
+                "bv": "6.8%",
+                "lean": "a"
+              },
+              {
+                "k": "Monthly payment",
+                "av": "$3,420",
+                "bv": "$2,608",
+                "lean": "b"
+              },
+              {
+                "k": "Total interest paid",
+                "av": "$215,600",
+                "bv": "$538,880",
+                "lean": "a"
+              },
+              {
+                "k": "Payoff horizon",
+                "av": "15 years",
+                "bv": "30 years",
+                "lean": "a"
+              },
+              {
+                "k": "Monthly cash-flow flexibility",
+                "av": "Low",
+                "bv": "High",
+                "lean": "b"
+              },
+              {
+                "k": "Equity build speed",
+                "av": "Fast",
+                "bv": "Slow",
+                "lean": "a"
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  {
+    "i": 3,
+    "utterance": "Show how a request flows through cache and database in a read-heavy service",
+    "scene": {
+      "uid": "REHEARSED-03",
+      "hero": 0,
+      "slots": [
+        { "t": "flow", "pos": "CENTER", "sz": "XL", "emp": 3 }
+      ]
+    },
+    "widgets": {
+      "REHEARSED-03:0": {
+        "status": "ready",
+        "data": {
+          "t": "flow",
+          "title": "Read request — cache → DB path",
+          "data": {
+            "nodes": [
+              { "id": "client",  "l": "Client",         "kind": "external" },
+              { "id": "api",     "l": "API server",      "kind": "service"  },
+              { "id": "cache",   "l": "Redis cache",     "kind": "cache"    },
+              { "id": "db",      "l": "Postgres DB",     "kind": "storage"  },
+              { "id": "resp",    "l": "Response",        "kind": "external" }
+            ],
+            "edges": [
+              { "s": "client", "t": "api",   "l": "HTTP GET" },
+              { "s": "api",    "t": "cache", "l": "lookup key" },
+              { "s": "cache",  "t": "api",   "l": "HIT → data" },
+              { "s": "cache",  "t": "db",    "l": "MISS → query" },
+              { "s": "db",     "t": "cache", "l": "fill + TTL" },
+              { "s": "api",    "t": "resp",  "l": "200 OK" }
+            ]
+          }
+        }
+      }
+    }
+  },
+  {
+    "i": 4,
+    "utterance": "Model compound interest over 30 years with a monthly contribution of $500",
+    "scene": {
+      "uid": "REHEARSED-04",
+      "hero": 0,
+      "slots": [
+        { "t": "sim", "pos": "CENTER", "sz": "XL", "emp": 3 }
+      ]
+    },
+    "widgets": {
+      "REHEARSED-04:0": {
+        "status": "ready",
+        "data": {
+          "t": "sim",
+          "title": "Compound interest — 30-year growth ($)",
+          "data": {
+            "vars": [
+              {
+                "n": "principal",
+                "v0": 10000,
+                "min": 0,
+                "max": 100000,
+                "step": 1000,
+                "unit": "$"
+              },
+              {
+                "n": "rate",
+                "v0": 7,
+                "min": 1,
+                "max": 20,
+                "step": 0.5,
+                "unit": "%",
+                "slider": true
+              },
+              {
+                "n": "monthly",
+                "v0": 500,
+                "min": 0,
+                "max": 5000,
+                "step": 50,
+                "unit": "$"
+              }
+            ],
+            "rels": [
+              {
+                "lhs": "futureValue",
+                "expr": "principal * (1 + rate/100)^30 + monthly * 12 * ((1 + rate/100)^30 - 1) / (rate/100)"
+              },
+              {
+                "lhs": "totalContributions",
+                "expr": "principal + monthly * 360"
+              },
+              {
+                "lhs": "gainRatio",
+                "expr": "futureValue / totalContributions"
+              }
+            ],
+            "chart": { "x": "rate", "y": "futureValue", "scale": "lin" }
+          }
+        }
+      }
+    }
+  }
+]
