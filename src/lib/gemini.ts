@@ -220,7 +220,9 @@ export function callFill(
         thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
         responseMimeType: "application/json",
         responseJsonSchema: schema,
-        maxOutputTokens: 1200,
+        // 2400 covers Plot with 30+ data points and Flow with 8+ nodes.
+        // 1200 was getting truncated on dense responses → empty JSON.parse.
+        maxOutputTokens: 2400,
       },
     });
 
@@ -258,7 +260,27 @@ export function callFill(
 
     // Final parse + validate. AJV is the gate that lets a widget transition
     // from "streaming" → "ready" — partials never satisfy it.
-    const parsed: unknown = JSON.parse(buf);
+    // Last-resort recovery: if the stream truncated mid-JSON (maxTokens hit,
+    // network blip, model stalled) the strict JSON.parse throws. Try the
+    // partial parser — if it produces a shape AJV accepts, ship it.
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(buf);
+    } catch (parseErr) {
+      try {
+        const recovered = parsePartial(buf, Allow.ALL);
+        if (recovered && typeof recovered === "object") {
+          console.warn(
+            `[fill ${slot.t}] strict JSON.parse failed; using partial-recovered shape`
+          );
+          parsed = recovered;
+        } else {
+          throw parseErr;
+        }
+      } catch {
+        throw parseErr;
+      }
+    }
     const result = validateFill(slot.t, parsed);
     if (!result.ok) {
       throw new GeminiValidationError(
