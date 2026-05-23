@@ -1,0 +1,256 @@
+# ============================================================================
+#  Living Stage .gitignore
+#  ─────────────────────────────────────────────────────────────────────────
+#  ⚠️  키/시크릿 한 줄이라도 새면 → 전 API 키 자동 폐기 → 라이브 데모 45% 0점.
+#  변경 시 반드시 spec §3.2·§3.4·§15 와 합치되는지 재검토.
+#  push 직전 매번 실행:
+#    git grep -nE 'AIza[0-9A-Za-z_-]{20,}'
+# ============================================================================
+
+
+# ───────────────────────────────────────────────────────────────
+#  ★ ENV / SECRETS  (최우선 — 모든 .env* 차단, .env.example만 예외)
+# ───────────────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+!.env.sample
+.env.local
+.env.development
+.env.development.local
+.env.test
+.env.test.local
+.env.production
+.env.production.local
+.env.staging
+.env.staging.local
+
+# Cloudflare Worker / Wrangler 시크릿 (spec §3.4)
+# 시크릿은 `wrangler secret put` 으로만 등록. 파일에 두지 말 것.
+.dev.vars
+.dev.vars.*
+.wrangler/
+wrangler.local.toml
+wrangler.*.local.toml
+
+# Generic credentials / private keys
+secrets/
+secret/
+private/
+*.pem
+*.key
+*.cert
+*.crt
+*.p12
+*.pfx
+*.asc
+*.gpg
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+known_hosts
+
+# Cloud provider credentials
+service-account*.json
+service_account*.json
+credentials.json
+gcp-key.json
+gcp-credentials.json
+firebase-adminsdk*.json
+.gcloud/
+.aws/
+.azure/
+.gcp/
+
+# API key dump 사고 방지 (실수로 만든 적 있는 파일명 패턴들)
+gemini_key*
+gemini.key
+api_key*
+api-key*
+api_keys*
+keys.txt
+keys/
+tokens.txt
+token.txt
+*.secret
+*.private
+*-private.*
+
+# OAuth / 세션 / npm 토큰
+.netrc
+.npmrc.local
+.npmrc
+!.npmrc.example
+
+
+# ───────────────────────────────────────────────────────────────
+#  의존성
+# ───────────────────────────────────────────────────────────────
+node_modules/
+jspm_packages/
+bower_components/
+.pnp
+.pnp.js
+.pnp.cjs
+.pnpm-store/
+.yarn/cache/
+.yarn/unplugged/
+.yarn/build-state.yml
+.yarn/install-state.gz
+.yarn/.cache/
+
+
+# ───────────────────────────────────────────────────────────────
+#  빌드 산출물
+# ───────────────────────────────────────────────────────────────
+dist/
+dist-ssr/
+build/
+out/
+.next/
+.nuxt/
+.svelte-kit/
+.vite/
+.turbo/
+.cache/
+.parcel-cache/
+.rollup.cache/
+.tmp/
+tmp/
+*.tsbuildinfo
+*.local
+
+
+# ───────────────────────────────────────────────────────────────
+#  로그
+# ───────────────────────────────────────────────────────────────
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+
+# ───────────────────────────────────────────────────────────────
+#  테스트 / 커버리지
+# ───────────────────────────────────────────────────────────────
+coverage/
+.nyc_output/
+.coverage/
+*.lcov
+playwright-report/
+playwright/.cache/
+test-results/
+
+
+# ───────────────────────────────────────────────────────────────
+#  IDE / 에디터
+# ───────────────────────────────────────────────────────────────
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.example.json
+.idea/
+*.swp
+*.swo
+*.swn
+*.iml
+*.ipr
+*.iws
+.project
+.classpath
+.settings/
+*.sublime-workspace
+*.sublime-project
+.history/
+
+
+# ───────────────────────────────────────────────────────────────
+#  OS
+# ───────────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.AppleDouble
+.LSOverride
+.Spotlight-V100
+.Trashes
+.fseventsd
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+ehthumbs.db
+ehthumbs_vista.db
+Thumbs.db
+Thumbs.db:encryptable
+desktop.ini
+
+
+# ───────────────────────────────────────────────────────────────
+#  배포 / 호스팅 메타
+# ───────────────────────────────────────────────────────────────
+.vercel/
+.netlify/
+.firebase/
+.serverless/
+.cloudflare/
+
+
+# ───────────────────────────────────────────────────────────────
+#  패키징 산출물
+# ───────────────────────────────────────────────────────────────
+*.tgz
+*.tar
+*.tar.gz
+*.zip
+*.7z
+*.rar
+
+
+# ───────────────────────────────────────────────────────────────
+#  데모 녹화 / 임시 미디어  (영상 export 후 외부 보관)
+# ───────────────────────────────────────────────────────────────
+recordings/
+captures/
+*.mov
+*.mp4
+*.webm
+*.gif
+*.mkv
+# 단, docs/ 안의 의도된 미디어는 허용
+!docs/**/*.gif
+!docs/**/*.mp4
+!docs/**/*.webm
+
+
+# ───────────────────────────────────────────────────────────────
+#  Claude Code 로컬 캐시  (팀 컨텍스트인 .claude/agents/, CLAUDE.md 는 커밋)
+# ───────────────────────────────────────────────────────────────
+.claude/cache/
+.claude/local/
+.claude/.session/
+
+
+# ───────────────────────────────────────────────────────────────
+#  실수로 만들기 쉬운 임시 파일
+# ───────────────────────────────────────────────────────────────
+*.bak
+*.backup
+*.old
+*.orig
+*.rej
+*~
+.#*
+\#*\#
+
+
+# ───────────────────────────────────────────────────────────────
+#  ★ 명시적으로 *반드시 커밋* 되어야 하는 것들 (실수 방지 메모)
+#     - src/rehearsed.json   ← 폴백 데이터 (spec §11)
+#     - src/PREFIX.ts        ← 캐시 프리픽스 (spec §10)
+#     - living_stage_spec_v2_3_merged.md ← 단일 진실
+#     - .env.example         ← 환경변수 템플릿
+#     - .claude/agents/*.md  ← 개발 팀 정의
+#     - CLAUDE.md            ← 프로젝트 컨텍스트
+# ───────────────────────────────────────────────────────────────
