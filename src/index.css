@@ -641,3 +641,28 @@ html, body, #root {
   0%, 100% { opacity: 0.4; }
   50%       { opacity: 0.85; }
 }
+
+/* Streaming-in-flight indicator (progressive fill).
+   Small accent-colored dot top-right of each card while status="streaming".
+   Removed once status="ready". Opacity + scale only — GPU-friendly. */
+.widget-wrapper[data-streaming="true"] {
+  position: relative;
+}
+.widget-wrapper[data-streaming="true"]::after {
+  content: "";
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent, #7adfff);
+  box-shadow: 0 0 8px var(--accent, #7adfff);
+  animation: streaming-pulse 1.2s ease-in-out infinite;
+  pointer-events: none;
+  z-index: 2;
+}
+@keyframes streaming-pulse {
+  0%, 100% { opacity: 0.3; transform: scale(0.8); }
+  50%      { opacity: 1;   transform: scale(1.2); }
+}
