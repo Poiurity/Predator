@@ -63,12 +63,16 @@ export function useASR(
   const silenceTimer = useRef<number | null>(null);
   const kindTimestamps = useRef<KindTimestamps>({});
 
-  // Phrase-level de-dup state:
-  //   lastFiredText — the trimmed text of the most recently fired phrase.
-  //   lastFiredAt   — timestamp of that fire (ms).
+  // Phrase-level state:
+  //   lastFiredFullText — the COMPLETE interim string we last fired from. Used
+  //     to compute the diff (new portion) so each phrase fires only the NEW
+  //     words, not the entire accumulated transcript.
+  //   lastFiredNewPart  — the trimmed new portion most recently fired (for dedup).
+  //   lastFiredAt       — timestamp of that fire (ms).
   //   wordsSinceLastFire — accumulated word count since the last phrase fire;
   //     used to gate conjunction triggers (must have ≥3 new words).
-  const lastFiredText = useRef<string>("");
+  const lastFiredFullText = useRef<string>("");
+  const lastFiredNewPart = useRef<string>("");
   const lastFiredAt = useRef<number>(0);
   const wordsSinceLastFire = useRef<number>(0);
 
@@ -97,28 +101,41 @@ export function useASR(
 
     let stopped = false;
 
-    // flush: trim, guard empty, guard de-dup (same text within 100ms),
-    // clear silence timer, push to store + fire onFinal.
+    // flush: extract the NEW portion since lastFiredFullText (so each fire
+    // sends only the new words, not the entire accumulated transcript),
+    // dedup, push to store + fire onFinal.
     // Does NOT clear interim from the store — continued speech accumulates.
-    const flush = (t: string): void => {
-      const x = t.trim();
-      if (!x) return;
+    const flush = (fullText: string): void => {
+      let newPart: string;
+      if (fullText.startsWith(lastFiredFullText.current)) {
+        newPart = fullText.slice(lastFiredFullText.current.length).trim();
+      } else {
+        // Web Speech rewrote the start (engine correction) — treat as fresh.
+        newPart = fullText.trim();
+      }
+      if (!newPart) return;
 
-      // De-dup guard: don't fire the same phrase twice within 100ms.
+      // De-dup guard: same new-portion within 100ms = duplicate fire.
       const now = Date.now();
-      if (x === lastFiredText.current && now - lastFiredAt.current < 100) return;
+      if (
+        newPart === lastFiredNewPart.current &&
+        now - lastFiredAt.current < 100
+      ) {
+        return;
+      }
 
       if (silenceTimer.current !== null) {
         clearTimeout(silenceTimer.current);
         silenceTimer.current = null;
       }
 
-      lastFiredText.current = x;
+      lastFiredFullText.current = fullText;
+      lastFiredNewPart.current = newPart;
       lastFiredAt.current = now;
       wordsSinceLastFire.current = 0;
 
-      appendFinal(x);
-      onFinalRef.current(x);
+      appendFinal(newPart);
+      onFinalRef.current(newPart);
     };
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -155,9 +172,9 @@ export function useASR(
 
         // ── Phrase-boundary detection ────────────────────────────────
         // Track how many new words accumulated in this interim chunk.
-        // We compare against the last fired text to find the "new" part.
-        const newPart = interim.startsWith(lastFiredText.current)
-          ? interim.slice(lastFiredText.current.length)
+        // We compare against the last fired full text to find the new part.
+        const newPart = interim.startsWith(lastFiredFullText.current)
+          ? interim.slice(lastFiredFullText.current.length)
           : interim;
         wordsSinceLastFire.current = wordCount(newPart);
 
