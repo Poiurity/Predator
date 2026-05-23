@@ -6,7 +6,7 @@
 // unrelated widgets do not re-render when an unrelated slice changes.
 
 import { create } from "zustand";
-import type { FilledWidget, OrchLayout } from "./lib/schemas";
+import type { FilledWidget, OrchLayout, OrchIntent, SlotMeta } from "./lib/schemas";
 
 export type WidgetStatus = "skeleton" | "ready" | "error";
 
@@ -24,6 +24,9 @@ export interface HudState {
   retries?: number;
 }
 
+// Maximum simultaneous slots on stage (spec §7.3 "6-slot cap").
+const MAX_SLOTS = 6;
+
 interface LivingStage {
   // ── Transcript / ASR ─────────────────────────────────────────────
   transcript: string;
@@ -38,6 +41,19 @@ interface LivingStage {
   commitScene: (scene: OrchLayout, seeds: Record<string, WidgetState>) => void;
   setWidget: (id: string, w: WidgetState) => void;
   clearScene: () => void;
+
+  // Append new slots to the current scene without replacing it.
+  // Hero index (newHero) is an absolute index in the merged slot array.
+  // Drops the OLDEST slots when the 6-slot cap is exceeded.
+  appendSlots: (
+    newSlots: SlotMeta[],
+    seeds: Record<string, WidgetState>,
+    newHero?: number
+  ) => void;
+
+  // ── Incremental mode indicator (for header badge) ─────────────────
+  lastIntent: OrchIntent | null;
+  setLastIntent: (i: OrchIntent) => void;
 
   // ── Fallback (spec §11 — ordered index, not hash) ────────────────
   fallbackMode: boolean;
@@ -69,6 +85,42 @@ export const useLS = create<LivingStage>((set, get) => ({
   setWidget: (id, w) =>
     set((st) => ({ widgets: { ...st.widgets, [id]: w } })),
   clearScene: () => set({ scene: null, widgets: {} }),
+
+  appendSlots: (newSlots, seeds, newHero) => {
+    const { scene, widgets } = get();
+    if (!scene) return; // no scene to append to — caller should commitScene first
+
+    const merged = [...scene.slots, ...newSlots];
+
+    // 6-slot cap: drop oldest slots from the front.
+    let trimmedWidgets = { ...widgets, ...seeds };
+    let trimmedSlots = merged;
+    let droppedCount = 0;
+    if (merged.length > MAX_SLOTS) {
+      droppedCount = merged.length - MAX_SLOTS;
+      // Delete widget keys for dropped slots before slicing.
+      for (let d = 0; d < droppedCount; d++) {
+        delete trimmedWidgets[`${scene.uid}:${d}`];
+      }
+      trimmedSlots = merged.slice(droppedCount);
+    }
+
+    const resolvedHero = newHero ?? scene.hero;
+    // Clamp hero into the trimmed slot array. If the old hero was in a
+    // dropped slot, it gets clamped to 0 (oldest remaining slot).
+    const clampedHero = Math.max(
+      0,
+      Math.min(resolvedHero - droppedCount, trimmedSlots.length - 1)
+    );
+
+    set({
+      scene: { ...scene, slots: trimmedSlots, hero: clampedHero },
+      widgets: trimmedWidgets,
+    });
+  },
+
+  lastIntent: null,
+  setLastIntent: (i) => set({ lastIntent: i }),
 
   fallbackMode: false,
   scriptIndex: 0,
