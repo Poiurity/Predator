@@ -89,23 +89,46 @@ function pushLatency(startedAt: number): void {
   useLS.getState().setHud({ latencyMs: Math.round(performance.now() - startedAt) });
 }
 
-// ── Orchestrator (spec §7.2) ──────────────────────────────────────────
+// ── Orchestrator (spec §7.2 + incremental scenes) ─────────────────────
 // Streams the layout JSON. Fires `onHero` as soon as the rolling buffer
 // contains a top-level "hero": N match so the shell can paint before
 // the full JSON arrives. Defensively re-validates against ORCH_SCHEMA.
+//
+// `currentScene` (optional) lets the orchestrator grow the stage over
+// successive utterances. When provided with ≥1 slot, the model sees a
+// shape-only summary of what's already on stage and chooses intent ∈
+// {add, replace, fresh}. We deliberately strip uid + widget bodies from
+// the summary so the model treats the scene as structural context, not
+// data to remix.
 export function callOrchestrator(
   text: string,
   signal: AbortSignal,
-  onHero: (h: number) => void
+  onHero: (h: number) => void,
+  currentScene?: OrchLayout | null
 ): Promise<OrchLayout> {
   return withRetry(async (sig) => {
     const startedAt = performance.now();
+
+    const sceneCtx =
+      currentScene && currentScene.slots.length > 0
+        ? `\n<currentScene>${JSON.stringify({
+            slots: currentScene.slots.map((s) => ({
+              t: s.t,
+              pos: s.pos,
+              sz: s.sz,
+              emp: s.emp,
+            })),
+          })}</currentScene>`
+        : "";
+
+    const promptText = `${PREFIX}${sceneCtx}\n\n<utterance>${text}</utterance>`;
+
     const stream = await ai.models.generateContentStream({
       model: MODEL,
       contents: [
         {
           role: "user",
-          parts: [{ text: `${PREFIX}\n\n<utterance>${text}</utterance>` }],
+          parts: [{ text: promptText }],
         },
       ],
       config: {
