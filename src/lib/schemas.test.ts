@@ -16,6 +16,7 @@ describe("validateOrch", () => {
   it("accepts a valid layout", () => {
     expect(
       validateOrch({
+        intent: "fresh",
         hero: 0,
         slots: [
           { t: "sim", pos: "CENTER", sz: "L", emp: 3 },
@@ -26,9 +27,57 @@ describe("validateOrch", () => {
     ).toBe(true);
   });
 
+  it("accepts intent='add' with a single slot (continuation)", () => {
+    expect(
+      validateOrch({
+        intent: "add",
+        hero: 0,
+        slots: [{ t: "plot", pos: "TR", sz: "M", emp: 1 }],
+        uid: "01JABCDEG",
+      })
+    ).toBe(true);
+  });
+
+  it("accepts intent='replace' with 3 slots", () => {
+    expect(
+      validateOrch({
+        intent: "replace",
+        hero: 0,
+        slots: [
+          { t: "flow", pos: "CENTER", sz: "L", emp: 3 },
+          { t: "annotate", pos: "BR", sz: "S", emp: 0 },
+          { t: "plot", pos: "TR", sz: "M", emp: 1 },
+        ],
+        uid: "01JABCDEH",
+      })
+    ).toBe(true);
+  });
+
+  it("rejects missing intent field", () => {
+    expect(
+      validateOrch({
+        hero: 0,
+        slots: [{ t: "sim", pos: "CENTER", sz: "L", emp: 3 }],
+        uid: "01JABCDEF",
+      })
+    ).toBe(false);
+  });
+
+  it("rejects unknown intent value", () => {
+    expect(
+      validateOrch({
+        intent: "merge",
+        hero: 0,
+        slots: [{ t: "sim", pos: "CENTER", sz: "L", emp: 3 }],
+        uid: "x",
+      })
+    ).toBe(false);
+  });
+
   it("rejects hero out of range", () => {
     expect(
       validateOrch({
+        intent: "fresh",
         hero: 5,
         slots: [{ t: "sim", pos: "CENTER", sz: "L" }],
         uid: "x",
@@ -39,13 +88,19 @@ describe("validateOrch", () => {
   it("rejects > 3 slots", () => {
     const slot = { t: "sim", pos: "TL", sz: "M" };
     expect(
-      validateOrch({ hero: 0, slots: [slot, slot, slot, slot], uid: "x" })
+      validateOrch({
+        intent: "fresh",
+        hero: 0,
+        slots: [slot, slot, slot, slot],
+        uid: "x",
+      })
     ).toBe(false);
   });
 
   it("rejects unknown widget type", () => {
     expect(
       validateOrch({
+        intent: "fresh",
         hero: 0,
         slots: [{ t: "ml-magic", pos: "TL", sz: "M" }],
         uid: "x",
@@ -56,6 +111,7 @@ describe("validateOrch", () => {
   it("rejects unknown position", () => {
     expect(
       validateOrch({
+        intent: "fresh",
         hero: 0,
         slots: [{ t: "sim", pos: "MIDDLE", sz: "L" }],
         uid: "x",
@@ -66,6 +122,7 @@ describe("validateOrch", () => {
   it("rejects emp > 3", () => {
     expect(
       validateOrch({
+        intent: "fresh",
         hero: 0,
         slots: [{ t: "sim", pos: "TL", sz: "M", emp: 5 }],
         uid: "x",
@@ -76,6 +133,7 @@ describe("validateOrch", () => {
   it("rejects missing uid", () => {
     expect(
       validateOrch({
+        intent: "fresh",
         hero: 0,
         slots: [{ t: "sim", pos: "TL", sz: "M" }],
       })
@@ -83,7 +141,9 @@ describe("validateOrch", () => {
   });
 
   it("rejects empty slots", () => {
-    expect(validateOrch({ hero: 0, slots: [], uid: "x" })).toBe(false);
+    expect(
+      validateOrch({ intent: "fresh", hero: 0, slots: [], uid: "x" })
+    ).toBe(false);
   });
 });
 

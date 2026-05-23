@@ -18,17 +18,32 @@ const SZ_ENUM = ["S", "M", "L", "XL"] as const;
 export type Pos = (typeof POS_ENUM)[number];
 export type Sz = (typeof SZ_ENUM)[number];
 
-// ─── ORCHESTRATOR (spec §4.1) ──────────────────────────────────────────
+// ─── ORCHESTRATOR (spec §4.1, incremental scenes) ─────────────────────
+//
+// `intent` lets the orchestrator decide whether to grow the scene
+// (`add`), discard and rebuild (`replace`), or paint a first scene
+// (`fresh`). Field order is locked — frontend merge logic depends on
+// "intent" appearing first so the rolling buffer can branch early
+// (mirrors the hero regex-peek trick).
+const INTENT_ENUM = ["fresh", "add", "replace"] as const;
+export type OrchIntent = (typeof INTENT_ENUM)[number];
+
 export const ORCH_SCHEMA = {
   type: "object",
-  propertyOrdering: ["hero", "slots", "uid"],
-  required: ["hero", "slots", "uid"],
+  propertyOrdering: ["intent", "hero", "slots", "uid"],
+  required: ["intent", "hero", "slots", "uid"],
   properties: {
+    intent: {
+      enum: INTENT_ENUM,
+      description:
+        "fresh: no prior scene, build new. add: append slots to current scene (default when <currentScene> present and topic continues). replace: discard current scene and build new (use only on explicit topic change like 'forget that' / 'now instead' / 'reset').",
+    },
     hero: {
       type: "integer",
       minimum: 0,
       maximum: 2,
-      description: "Index of the hero slot. PREFER a 'sim' for interactivity.",
+      description:
+        "Hero index WITHIN the returned slots array (0..slots.length-1). For 'add' intent, this refers to slots in this response only — frontend keeps existing hero unless a returned slot has emp:3.",
     },
     slots: {
       type: "array",
@@ -51,7 +66,12 @@ export const ORCH_SCHEMA = {
 } as const;
 
 export type SlotMeta = { t: WidgetType; pos: Pos; sz: Sz; emp?: number };
-export type OrchLayout = { hero: number; slots: SlotMeta[]; uid: string };
+export type OrchLayout = {
+  intent: OrchIntent;
+  hero: number;
+  slots: SlotMeta[];
+  uid: string;
+};
 
 export const validateOrch = ajv.compile<OrchLayout>(ORCH_SCHEMA as object);
 
