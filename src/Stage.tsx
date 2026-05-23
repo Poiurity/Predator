@@ -102,8 +102,11 @@ export function Stage() {
   // so skeleton paint doesn't block the browser's main thread.
   const [, startTransition] = useTransition();
 
-  // Text input ref — "/" hotkey focuses it.
+  // Text input ref — "/" hotkey opens + focuses; ESC hides.
   const textInputRef = useRef<HTMLInputElement>(null);
+  // Text input visibility — hidden by default, presenter can toggle for typing
+  // demos or when the mic is unavailable / noisy.
+  const [showTextInput, setShowTextInput] = useState(false);
 
   // ── Boot: log PREFIX_SHA once ────────────────────────────────────────────
   useEffect(() => {
@@ -117,14 +120,24 @@ export function Stage() {
     const onKey = (e: KeyboardEvent) => {
       const meta = e.metaKey || e.ctrlKey;
 
-      // "/" → focus text input
+      // "/" → show text input + focus. ESC → hide it.
       if (
         e.key === "/" &&
         !(e.target instanceof HTMLInputElement) &&
         !(e.target instanceof HTMLTextAreaElement)
       ) {
         e.preventDefault();
-        textInputRef.current?.focus();
+        setShowTextInput(true);
+        // Defer focus until after the input mounts on next paint.
+        requestAnimationFrame(() => textInputRef.current?.focus());
+        return;
+      }
+
+      if (e.key === "Escape" && e.target instanceof HTMLInputElement) {
+        // Only hide if the user explicitly hits ESC inside the text input.
+        e.preventDefault();
+        textInputRef.current?.blur();
+        setShowTextInput(false);
         return;
       }
 
@@ -445,18 +458,35 @@ export function Stage() {
         architecture.
       </div>
 
-      {/* Text mode input (spec §15) — always visible, same handleUtterance pipeline */}
-      <form className="text-input-row" onSubmit={handleTextSubmit}>
-        <input
-          ref={textInputRef}
-          type="text"
-          placeholder='Type an utterance and press Enter (or speak)  —  "/" to focus'
-          aria-label="text utterance input"
-          autoComplete="off"
-          spellCheck={false}
-        />
-        <button type="submit">Send</button>
-      </form>
+      {/* Text mode input (spec §15). Hidden by default; "/" opens, ESC hides.
+          The floating chip is always visible so the affordance is discoverable. */}
+      <button
+        type="button"
+        className={`text-input-toggle ${showTextInput ? "is-open" : ""}`}
+        onClick={() => {
+          setShowTextInput((v) => !v);
+          if (!showTextInput) {
+            requestAnimationFrame(() => textInputRef.current?.focus());
+          }
+        }}
+        aria-label={showTextInput ? "hide text input" : "show text input"}
+        title='press "/" to open, Esc to close'
+      >
+        {showTextInput ? "×" : "/"}
+      </button>
+      {showTextInput && (
+        <form className="text-input-row" onSubmit={handleTextSubmit}>
+          <input
+            ref={textInputRef}
+            type="text"
+            placeholder='Type an utterance and press Enter  —  Esc to hide'
+            aria-label="text utterance input"
+            autoComplete="off"
+            spellCheck={false}
+          />
+          <button type="submit">Send</button>
+        </form>
+      )}
 
       {/* Transcript footer — always visible, spec §8.
           displayTranscript prefers the Gemini-polished version for context-

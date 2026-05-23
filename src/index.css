@@ -642,6 +642,37 @@ html, body, #root {
   50%       { opacity: 0.85; }
 }
 
+/* Text input toggle chip — small floating affordance bottom-right.
+   "/" opens + focuses, ESC closes. Hidden text input by default keeps the
+   stage uncluttered for the voice-first demo. */
+.text-input-toggle {
+  position: fixed;
+  bottom: 4.5rem;
+  right: 1rem;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  z-index: 10;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+}
+.text-input-toggle:hover {
+  background: rgba(122, 223, 255, 0.12);
+  border-color: var(--accent, #7adfff);
+}
+.text-input-toggle.is-open {
+  background: var(--accent, #7adfff);
+  color: #0a0d10;
+  border-color: var(--accent, #7adfff);
+}
+
 /* Streaming-in-flight indicator (progressive fill).
    Small accent-colored dot top-right of each card while status="streaming".
    Removed once status="ready". Opacity + scale only — GPU-friendly. */
