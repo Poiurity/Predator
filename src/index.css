@@ -1,0 +1,107 @@
+:root {
+  --bg-stage: #0a0b0d;
+  --bg-card: #14161a;
+  --fg: #e7e9ee;
+  --fg-dim: #8a8f99;
+  --fg-faint: #4a4f5a;
+  --accent: #cdd6e0;
+  --grid: rgba(255, 255, 255, 0.04);
+  --warn: rgb(232, 184, 79);
+
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  -webkit-font-smoothing: antialiased;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root {
+  margin: 0;
+  height: 100%;
+  background: var(--bg-stage);
+  color: var(--fg);
+}
+
+.stage {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  height: 100vh;
+  background:
+    linear-gradient(var(--grid) 1px, transparent 1px) 0 0 / 48px 48px,
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px) 0 0 / 48px 48px,
+    var(--bg-stage);
+}
+
+.stage-header {
+  display: flex;
+  align-items: baseline;
+  gap: 1rem;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid var(--grid);
+}
+
+.stage-header h1 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--fg);
+}
+
+.stage-tag {
+  font-size: 0.75rem;
+  color: var(--fg-faint);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+#scene {
+  position: relative;
+  padding: 1.5rem;
+  overflow: hidden;
+}
+
+.card {
+  contain: content;
+  content-visibility: auto;
+  contain-intrinsic-size: 0 320px;
+  background: var(--bg-card);
+  border: 1px solid var(--grid);
+  border-radius: 6px;
+  padding: 1rem;
+}
+
+.card[data-anim] { will-change: transform; }
+.card[data-emp="3"] { border-color: rgba(255, 255, 255, 0.18); }
+
+.transcript {
+  padding: 0.75rem 1.5rem;
+  border-top: 1px solid var(--grid);
+  color: var(--fg-dim);
+  font-size: 0.875rem;
+  font-feature-settings: "tnum";
+  min-height: 2.5rem;
+  white-space: pre-wrap;
+}
+
+.transcript-cursor {
+  display: inline-block;
+  color: var(--fg-faint);
+  animation: blink 1.1s steps(1) infinite;
+}
+
+@keyframes blink { 50% { opacity: 0; } }
+
+#fallback-banner {
+  position: fixed;
+  top: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 0.5rem 1rem;
+  background: rgba(232, 184, 79, 0.08);
+  border: 1px solid rgba(232, 184, 79, 0.4);
+  color: var(--warn);
+  border-radius: 4px;
+  font-size: 0.8125rem;
+  letter-spacing: 0.01em;
+}

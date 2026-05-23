@@ -1,0 +1,36 @@
+{
+  "name": "living-stage",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "scan:keys": "( git grep -nE 'AIza[0-9A-Za-z_-]{20,}|sk-[A-Za-z0-9]{20,}|ya29\\.[0-9A-Za-z_-]{20,}' . ':!node_modules' && echo '🚨 KEY LEAK — aborting' && exit 1 ) || echo '✅ no key leaks'",
+    "worker:dev": "wrangler dev --config worker/wrangler.toml",
+    "worker:deploy": "wrangler deploy --config worker/wrangler.toml",
+    "worker:secret": "wrangler secret put GEMINI_API_KEY --config worker/wrangler.toml"
+  },
+  "dependencies": {
+    "@google/genai": "^2.6.0",
+    "ajv": "^8.17.1",
+    "mathjs": "^14.0.0",
+    "motion": "^12.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "recharts": "^2.13.0",
+    "ulid": "^2.3.0",
+    "zustand": "^5.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.6.3",
+    "vite": "^6.0.0",
+    "wrangler": "^3.91.0"
+  }
+}

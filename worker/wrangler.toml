@@ -1,0 +1,7 @@
+name = "living-stage"
+main = "worker.js"
+compatibility_date = "2026-05-23"
+
+# 시크릿은 절대 여기 두지 않음. 등록은:
+#   npm run worker:secret    # → 프롬프트에 키 붙여넣기
+# 평문 var 도 두지 않음. 모든 비밀은 wrangler secret 으로.
