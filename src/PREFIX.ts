@@ -131,17 +131,55 @@ Variables that are sliders MUST set min, max, step, and slider:true.
 Pick step so a full sweep is ~50-200 increments (smooth feel).
 `;
 
+// ── Incremental scene rules (spec §4.1 intent field) ──────────────────
+const INCREMENTAL_RULES = `# Incremental scene rules
+
+When <currentScene> is absent or its slots array is empty: intent MUST be "fresh".
+
+When <currentScene> is present with slots:
+  - DEFAULT to intent="add" — the presenter is building on what's there.
+  - Use intent="add" for any of: "also", "and", "plus", "in addition", "now show", "additionally", a question like "what about", or any utterance that introduces a new fact, axis, or comparison without rejecting prior content.
+  - Use intent="replace" ONLY on explicit reset signals: "forget that", "forget all this", "now instead", "reset", "new topic", "let's switch to", "actually never mind", or when the new utterance is a complete change of domain (e.g. prior scene is mortgage, utterance is about astronomy).
+  - When intent="add", return ONLY the new slot(s) — do NOT repeat existing slots. Frontend appends.
+  - When intent="add", choose pos to avoid collision with existing slots (TR if existing is TL, BR if TR taken, etc.). Use CENTER only if it's empty.
+  - When intent="add", emp on the new slot should be 1 by default. Use emp:3 (hero) only if the new slot is clearly the main subject (e.g. a sim when nothing else is interactive).
+  - Slots have visual hierarchy: emp:3 = hero (largest, glowing), emp:2 = supporting, emp:1 = small. Only ONE slot in the entire scene should be emp:3.
+
+When intent="replace": same rules as fresh — return the whole layout.
+`;
+
 // ── Few-shot examples ─────────────────────────────────────────────────
+// Note: every orchestrator example now carries an `intent` field — the
+// new schema makes it required. The first two are the original (pre-
+// incremental) shots with intent="fresh" inlined; the next four cover
+// fresh / add (with conjunction) / add (no conjunction) / replace.
 const FEWSHOT_ORCH = `# Few-shot: orchestrator
 
 Input utterance: "let's tune a logistic growth model — carrying capacity
 matters most"
 Expected output (one valid JSON value, schema = orchestrator):
-{"hero":0,"slots":[{"t":"sim","pos":"CENTER","sz":"XL","emp":3},{"t":"annotate","pos":"TR","sz":"S","emp":0}],"uid":"01HKZ"}
+{"intent":"fresh","hero":0,"slots":[{"t":"sim","pos":"CENTER","sz":"XL","emp":3},{"t":"annotate","pos":"TR","sz":"S","emp":0}],"uid":"01HKZ"}
 
 Input utterance: "compare a SQL vs a vector database for retrieval"
 Expected output:
-{"hero":0,"slots":[{"t":"compare","pos":"CENTER","sz":"L","emp":3},{"t":"annotate","pos":"BR","sz":"S","emp":1}],"uid":"01HKZ"}
+{"intent":"fresh","hero":0,"slots":[{"t":"compare","pos":"CENTER","sz":"L","emp":3},{"t":"annotate","pos":"BR","sz":"S","emp":1}],"uid":"01HKZ"}
+
+Input utterance: "Model the effect of interest rate on monthly mortgage payment"
+(no <currentScene> present)
+Expected output:
+{"intent":"fresh","hero":0,"slots":[{"t":"sim","pos":"CENTER","sz":"L","emp":3}],"uid":"01HMNFRESH0000000000000000"}
+
+Input utterance: <currentScene>{"slots":[{"t":"sim","pos":"CENTER","sz":"L","emp":3}]}</currentScene><utterance>also show GDP of Korea and Japan from 2010 to 2024</utterance>
+Expected output (intent="add", new slot only, hero refers to returned slots[0]):
+{"intent":"add","hero":0,"slots":[{"t":"plot","pos":"TR","sz":"M","emp":1}],"uid":"01HMNADDCONJ00000000000000"}
+
+Input utterance: <currentScene>{"slots":[{"t":"sim","pos":"CENTER","sz":"L","emp":3},{"t":"plot","pos":"TR","sz":"M","emp":1}]}</currentScene><utterance>compare 15-year fixed vs 30-year fixed</utterance>
+Expected output (intent="add" despite no conjunction — new visual, no reset signal):
+{"intent":"add","hero":0,"slots":[{"t":"compare","pos":"BL","sz":"M","emp":1}],"uid":"01HMNADDNOCONJ000000000000"}
+
+Input utterance: <currentScene>{"slots":[{"t":"sim","pos":"CENTER","sz":"L","emp":3}]}</currentScene><utterance>forget that, now show me how a request flows through cache and database</utterance>
+Expected output (intent="replace" — explicit reset signal "forget that"):
+{"intent":"replace","hero":0,"slots":[{"t":"flow","pos":"CENTER","sz":"L","emp":3}],"uid":"01HMNREPLACE00000000000000"}
 `;
 
 const FEWSHOT_SIM = `# Few-shot: sim fill
@@ -200,7 +238,7 @@ Additional few-shot — orchestrator with a flow hero:
 
 Input utterance: "walk through the request lifecycle in our gateway"
 Expected output:
-{"hero":0,"slots":[{"t":"flow","pos":"CENTER","sz":"XL","emp":3},{"t":"annotate","pos":"BR","sz":"S","emp":0}],"uid":"01HKZ"}
+{"intent":"fresh","hero":0,"slots":[{"t":"flow","pos":"CENTER","sz":"XL","emp":3},{"t":"annotate","pos":"BR","sz":"S","emp":0}],"uid":"01HKZ"}
 
 Additional few-shot — annotate fill:
 
@@ -218,10 +256,14 @@ End of padding block.
 `;
 
 // ── Assembly ──────────────────────────────────────────────────────────
+// INCREMENTAL_RULES sits right after REACTIVE_RULES (before the
+// few-shots) so the model has the intent semantics in mind when it
+// reaches the worked examples.
 const PARTS: string[] = [
   SYSTEM,
   WIDGET_CATALOG,
   REACTIVE_RULES,
+  INCREMENTAL_RULES,
   FEWSHOT_ORCH,
   FEWSHOT_SIM,
   FEWSHOT_PLOT,
