@@ -137,12 +137,46 @@ export function useASR(
       }
     };
 
+    // Terminal errors: there is no recovery, restarting the recognizer just
+    // re-triggers the same error in a tight loop (~30k/sec observed with
+    // not-allowed). When we see one of these, freeze the loop and warn ONCE.
+    const TERMINAL = new Set([
+      "not-allowed",
+      "service-not-allowed",
+      "audio-capture",
+      "bad-grammar",
+      "language-not-supported",
+    ]);
+    let warned = false;
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     rec.onerror = (e: any) => {
       // Benign errors: no-speech (silence), aborted (we called stop),
       // network (transient). The restart loop covers these automatically.
       if (["no-speech", "aborted", "network"].includes(e.error)) return;
-      console.warn("[asr] error:", e.error);
+
+      if (TERMINAL.has(e.error)) {
+        // Kill the restart loop so we do not spam errors. Text mode in
+        // Stage covers the no-mic path; the user can still drive the demo.
+        stopped = true;
+        rec.onend = null;
+        try {
+          rec.stop();
+        } catch {
+          // already stopped
+        }
+        if (!warned) {
+          warned = true;
+          console.warn(
+            `[asr] terminal error '${e.error}' — mic disabled, text mode still works`
+          );
+        }
+        return;
+      }
+      if (!warned) {
+        warned = true;
+        console.warn("[asr] error:", e.error);
+      }
     };
 
     rec.start();
