@@ -102,6 +102,37 @@ export function compileRels(
   return out;
 }
 
+// Tolerant variant — used during partial streaming where the model may emit
+// half-formed expressions ("p * ra"). Skips bad rels instead of throwing so
+// the widget can render the rels that DO parse, no ErrorBoundary remount.
+// Returns the list of successfully-compiled rels plus the names that failed.
+export function tryCompileRels(
+  rels: ReadonlyArray<{ lhs: string; expr: string }>,
+  varNames: ReadonlySet<string>
+): { ok: CompiledRel[]; bad: string[] } {
+  const known = new Set(varNames);
+  const ok: CompiledRel[] = [];
+  const bad: string[] = [];
+  for (const r of rels) {
+    if (!r.lhs || !r.expr) {
+      bad.push(r.lhs ?? "?");
+      continue;
+    }
+    const errs = validateExpr(r.expr, known);
+    if (errs.length) {
+      bad.push(r.lhs);
+      continue;
+    }
+    try {
+      ok.push({ lhs: r.lhs, fn: math.compile(r.expr) });
+      known.add(r.lhs);
+    } catch {
+      bad.push(r.lhs);
+    }
+  }
+  return { ok, bad };
+}
+
 export function evalRel(
   c: CompiledRel,
   scope: Record<string, number>

@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { compileRels, evalRel, type CompiledRel } from "../lib/safe-math";
+import { tryCompileRels, evalRel, type CompiledRel } from "../lib/safe-math";
 import { rafThrottle } from "../lib/raf-throttle";
 import type { SimData, SimVar } from "../lib/schemas";
 import { MiniChart } from "./MiniChart";
@@ -45,13 +45,18 @@ function SimInner({ data, title }: Props) {
     [data.vars]
   );
 
-  // compileRels throws on invalid expression — caught by ErrorBoundary.
-  // Partial rels with mid-stream half-written expr will fail here; the
-  // ErrorBoundary falls back to a skeleton for that chunk window.
-  const compiled = useMemo(
-    () => compileRels(data.rels, varNames),
-    [data.rels, varNames]
-  );
+  // tryCompileRels skips rels that fail to parse instead of throwing.
+  // During partial streaming the model may emit a half-formed expr ("p * ra")
+  // that would throw in strict compileRels and trigger an ErrorBoundary
+  // remount on every chunk. Tolerant compile keeps successfully-parsed rels
+  // visible; bad ones get logged once and ignored until they fully arrive.
+  const compiled = useMemo<CompiledRel[]>(() => {
+    const { ok, bad } = tryCompileRels(data.rels ?? [], varNames);
+    if (bad.length > 0) {
+      console.debug("[sim] skipping unparseable rels (partial stream?):", bad);
+    }
+    return ok;
+  }, [data.rels, varNames]);
 
   const sliderVar = useMemo<SimVar>(
     () => data.vars.find((v) => v.slider) ?? data.vars[0]!,
