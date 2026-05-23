@@ -11,7 +11,7 @@
 //   - Motion FLIP grow animation: scaleY 0→1, originY top ("slide dissolution")
 //   - Hero pulse: slow box-shadow loop on emp:3 slot
 //
-// Hard rules (CLAUDE.md / spec):
+// Hard rules (spec):
 //   - No React Context. All state via useLS selectors.
 //   - orchControllerRef aborted on each new orch call; fills run to completion
 //     with their own AbortController so add-mode fills aren't killed by the

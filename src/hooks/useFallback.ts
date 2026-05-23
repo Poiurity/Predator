@@ -15,7 +15,7 @@
 //
 //   announce()
 //     - BOTH mouth (TTS) AND visual banner. Neither alone is sufficient.
-//     - Spec §11 / CLAUDE.md: hiding the switch is a disqualification risk.
+//     - Spec §11: hiding the switch is a disqualification risk.
 //
 //   resetFallback()
 //     - Exported for Cmd+Shift+L hotkey in Stage.tsx.

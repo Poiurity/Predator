@@ -12,7 +12,7 @@
 // the orchestration layer can decide on a single-shot repair or fall
 // back to rehearsed.json (spec §11 / §12).
 //
-// Hard rules echoed for the future-self reader (CLAUDE.md, spec §10):
+// Hard rules echoed for the future-self reader (spec §10):
 //   - MODEL is "gemini-3.5-flash". NOT "gemini-3-flash-preview".
 //   - thinkingLevel ∈ {"minimal" (orch/patch), "low" (fill)} only.
 //   - No `tools` array. No `temperature`/`top_p`/`top_k`.
