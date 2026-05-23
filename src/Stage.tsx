@@ -35,143 +35,12 @@ import { ulid } from "ulid";
 import { useLS } from "./store";
 import type { WidgetState } from "./store";
 import type { OrchLayout, OrchIntent, WidgetType, Pos, SlotMeta } from "./lib/schemas";
-import { callOrchestrator, callFill } from "./lib/gemini";
+import { callOrchestrator, callFillToStore } from "./lib/gemini";
 import { runUtterance, resetFallback } from "./hooks/useFallback";
 import { useASR } from "./hooks/useASR";
 import { useTranscriptPolish } from "./hooks/useTranscriptPolish";
-import { Sim } from "./widgets/Sim";
-import { Plot } from "./widgets/Plot";
-import { Compare } from "./widgets/Compare";
-import { Flow } from "./widgets/Flow";
-import { Annotate } from "./widgets/Annotate";
-import { Skeleton } from "./widgets/Skeleton";
-import { ErrorBoundary } from "./widgets/ErrorBoundary";
+import { WidgetCard } from "./widgets/WidgetContent";
 import { PREFIX_SHA } from "./PREFIX";
-
-// ── Widget dispatch ────────────────────────────────────────────────────────
-// Each case renders the filled widget content only — the outer WidgetCard
-// wraps every slot with ErrorBoundary + Motion so the pattern is uniform.
-function WidgetContent({ ws }: { ws: WidgetState }) {
-  if (ws.status === "skeleton" || !ws.data) {
-    return <Skeleton kind="loading" />;
-  }
-  if (ws.status === "error") {
-    return <Skeleton kind={ws.data?.t} message="(error)" />;
-  }
-
-  const d = ws.data;
-  switch (d.t) {
-    case "sim":
-      return <Sim title={d.title} data={d.data} />;
-    case "plot":
-      return <Plot title={d.title} data={d.data} />;
-    case "compare":
-      return <Compare title={d.title} data={d.data} />;
-    case "flow":
-      return <Flow title={d.title} data={d.data} />;
-    case "annotate":
-      return <Annotate title={d.title} data={d.data} />;
-    default: {
-      // Exhaustive check — TypeScript will warn if WidgetType grows.
-      const _never: never = d;
-      void _never;
-      return <Skeleton kind="unknown" message="(unknown widget type)" />;
-    }
-  }
-}
-
-// ── WidgetCard — Motion FLIP wrapper (spec §9, §16) ────────────────────────
-// "Slide dissolution" aesthetic: each slot grows downward from the top
-// (scaleY 0→1 with originY="top") rather than fading in. This makes it
-// look like a line extending on the stage floor.
-// Hero pulse: a gentle box-shadow breath on emp:3 slots.
-// data-anim is set on animation start and removed on complete so
-// will-change: transform (index.css: .card[data-anim]) is only active
-// during the animation frame window.
-interface WidgetCardProps {
-  slotKey: string;
-  slot: SlotMeta;
-  isHero: boolean;
-  ws: WidgetState;
-}
-
-function WidgetCard({ slotKey, slot, isHero, ws }: WidgetCardProps) {
-  // Stable motion key: uid:index — ensures Motion FLIP treats each slot as
-  // a new node when the scene changes. Never use array index alone.
-  return (
-    <motion.div
-      key={slotKey}
-      layout
-      className="widget-wrapper"
-      data-pos={slot.pos}
-      data-sz={slot.sz}
-      data-emp={slot.emp ?? 0}
-      data-hero={isHero ? "true" : undefined}
-      // Grow downward from top — "slide dissolution."
-      initial={{ opacity: 0, scaleY: 0, originY: "top" }}
-      animate={
-        isHero
-          ? {
-              opacity: 1,
-              scaleY: 1,
-              originY: "top",
-            }
-          : { opacity: 1, scaleY: 1, originY: "top" }
-      }
-      exit={{ opacity: 0, scaleY: 0, originY: "top" }}
-      transition={{
-        duration: 0.35,
-        ease: "easeOut",
-        layout: { duration: 0.3, ease: "easeInOut" },
-      }}
-      // Toggle will-change only during animation (spec §9 perf trap).
-      onAnimationStart={(e) => {
-        if (e instanceof Element) e.setAttribute("data-anim", "");
-      }}
-      onAnimationComplete={(e) => {
-        if (e instanceof Element) e.removeAttribute("data-anim");
-      }}
-    >
-      {/* Hero pulse — wraps only hero slot. Low-intensity box-shadow loop
-          on the card border so GPU compositing handles it (no layout). */}
-      {isHero ? (
-        <motion.div
-          animate={{
-            boxShadow: [
-              "0 0 0 0px rgba(122, 223, 255, 0.0)",
-              "0 0 0 3px rgba(122, 223, 255, 0.12)",
-              "0 0 0 0px rgba(122, 223, 255, 0.0)",
-            ],
-          }}
-          transition={{ duration: 2.4, repeat: Infinity, ease: "easeInOut" }}
-          style={{ borderRadius: 6 }}
-        >
-          <ErrorBoundary
-            fallback={(err) => (
-              <Skeleton
-                kind={slot.t}
-                message={`render error: ${err.message}`}
-              />
-            )}
-          >
-            <WidgetContent ws={ws} />
-          </ErrorBoundary>
-        </motion.div>
-      ) : (
-        <ErrorBoundary
-          fallback={(err) => (
-            <Skeleton
-              kind={slot.t}
-              message={`render error: ${err.message}`}
-            />
-          )}
-        >
-          <WidgetContent ws={ws} />
-        </ErrorBoundary>
-      )}
-    </motion.div>
-  );
-}
 
 // ── Pos collision helper ───────────────────────────────────────────────────
 // For pre-spawn skeletons only. Model picks real pos; this just avoids
@@ -365,6 +234,9 @@ export function Stage() {
 
           // Fan-out fills — each slot gets its own AbortController so they
           // don't interfere with the next orch call's abort.
+          // callFillToStore pushes status:"streaming" + partial data on every
+          // chunk so widgets grow visibly. Final ready/error state is set
+          // here once the AJV-validated payload resolves.
           // TODO: on fresh/replace, we could abort the PREVIOUS fill batch
           // here. Currently stale fills write to dropped slot keys and are
           // silently ignored by the store.
@@ -372,7 +244,7 @@ export function Stage() {
             safeLayout.slots.map((slot, i) => {
               const key = `${uid}:${i}`;
               const fillController = new AbortController();
-              return callFill(slot, safeLayout, utterance, fillController.signal)
+              return callFillToStore(key, slot, safeLayout, utterance, fillController.signal)
                 .then((data) => {
                   setWidget(key, { status: "ready", data });
                 })
@@ -422,22 +294,33 @@ export function Stage() {
           lastCommitAt.current = Date.now();
 
           // Fan-out fills keyed to the EXISTING scene uid (base.uid).
+          // callFillToStore pushes status:"streaming" + partial data on every
+          // chunk so the audience sees the widget grow as data arrives.
+          const mergedLayout: OrchLayout = {
+            ...base,
+            slots: [...base.slots, ...layout.slots],
+          };
           void Promise.all(
             layout.slots.map((slot, i) => {
               const key = `${base.uid}:${baseIndex + i}`;
               const fillController = new AbortController();
-              return callFill(slot, { ...base, slots: [...base.slots, ...layout.slots] }, utterance, fillController.signal)
-                .then((data) => {
-                  setWidget(key, { status: "ready", data });
-                })
-                .catch((err: unknown) => {
-                  if ((err as Error)?.name === "AbortError") return;
-                  console.error(`[stage] fill(${slot.t}) slot ${baseIndex + i} failed:`, err);
-                  setWidget(key, {
-                    status: "error",
-                    error: String((err as Error)?.message ?? err),
-                  });
+              return callFillToStore(
+                key,
+                slot,
+                mergedLayout,
+                utterance,
+                fillController.signal
+              ).catch((err: unknown) => {
+                if ((err as Error)?.name === "AbortError") return;
+                console.error(
+                  `[stage] fill(${slot.t}) slot ${baseIndex + i} failed:`,
+                  err
+                );
+                setWidget(key, {
+                  status: "error",
+                  error: String((err as Error)?.message ?? err),
                 });
+              });
             })
           );
         }
