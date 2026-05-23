@@ -94,6 +94,17 @@ async function proxyGemini(req, res, url) {
     "Access-Control-Allow-Origin": "*",
   });
 
+  // Log upstream error bodies so we can diagnose 4xx/5xx in Cloud Run logs
+  // without the body leaking sensitive data — Gemini errors are JSON shape
+  // {error:{code,message,status,...}} with no key echo.
+  if (!upstream.ok) {
+    const buf = await upstream.arrayBuffer();
+    const text = Buffer.from(buf).toString("utf8");
+    console.warn(`[proxy] upstream ${upstream.status} ${url.pathname} :: ${text.slice(0, 800)}`);
+    res.end(Buffer.from(buf));
+    return;
+  }
+
   if (upstream.body) {
     Readable.fromWeb(upstream.body).pipe(res);
   } else {
