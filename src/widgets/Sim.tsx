@@ -28,12 +28,26 @@ export function Sim({ data, title }: Props) {
 }
 
 function SimInner({ data, title }: Props) {
+  // Streaming-safe guard: if vars hasn't streamed in yet, render a placeholder
+  // skeleton frame instead of throwing on `data.vars[0]!`. The ErrorBoundary
+  // around SimInner would catch it but remount-on-error per chunk causes jank.
+  if (!data.vars || data.vars.length === 0) {
+    return (
+      <div className="card sim-widget" data-emp="3">
+        {title && <div className="card-title">{title}</div>}
+        <Skeleton kind="sim" />
+      </div>
+    );
+  }
+
   const varNames = useMemo(
     () => new Set(data.vars.map((v) => v.n)),
     [data.vars]
   );
 
   // compileRels throws on invalid expression — caught by ErrorBoundary.
+  // Partial rels with mid-stream half-written expr will fail here; the
+  // ErrorBoundary falls back to a skeleton for that chunk window.
   const compiled = useMemo(
     () => compileRels(data.rels, varNames),
     [data.rels, varNames]
