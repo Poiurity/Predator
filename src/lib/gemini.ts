@@ -22,6 +22,7 @@ import {
   ThinkingLevel,
   type GenerateContentResponse,
 } from "@google/genai";
+import { parse as parsePartial, Allow } from "partial-json";
 import { withRetry } from "./retry";
 import { PREFIX } from "../PREFIX";
 import {
@@ -171,11 +172,30 @@ export function callOrchestrator(
 // ── Fill (spec §7.2) ──────────────────────────────────────────────────
 // Streams a single widget body. Schema is picked by slot.t. SIM_SCHEMA
 // is what enables interactive heros; everything else is read-only.
+//
+// `onPartial` (optional) fires after each chunk with a best-effort partial
+// parse of the rolling buffer. Lets the caller render the widget as it
+// grows — chart drawing itself, table filling row by row, etc. The partial
+// object is NOT AJV-validated (the model may emit a trailing prefix like
+// `{"t":"si` mid-stream and partial-json will collapse it to `{}`). Only
+// the FINAL JSON.parse is validated, so a misbehaving model still cannot
+// land an invalid widget in `ready` state. Cosmetic-only.
+//
+// Implementation notes:
+//   - We dedupe by stringifying the partial — partial-json may return the
+//     same shape across multiple chunks (especially while a long string
+//     value is being filled in). No need to push duplicate setWidget calls.
+//   - Allow.ALL lets us see partial strings as well as partial arrays/
+//     objects/numbers so e.g. plot series with a half-finished point still
+//     surface (the widget filters malformed pts before rendering).
+//   - Retries replay the whole stream; if a retry succeeds onPartial will
+//     fire afresh from the new attempt. Caller's last setWidget wins.
 export function callFill(
   slot: SlotMeta,
   layout: OrchLayout,
   text: string,
-  signal: AbortSignal
+  signal: AbortSignal,
+  onPartial?: (partial: Partial<FilledWidget>) => void
 ): Promise<FilledWidget> {
   return withRetry(async (sig) => {
     const startedAt = performance.now();
@@ -205,12 +225,39 @@ export function callFill(
     });
 
     let buf = "";
+    let lastPartialJson = "";
     for await (const chunk of stream) {
       buf += chunk.text ?? "";
+
+      // Best-effort partial parse. Skip if no callback — saves the
+      // stringify cost when onPartial isn't wired (e.g. tests).
+      if (onPartial && buf.length > 0) {
+        try {
+          const partial = parsePartial(buf, Allow.ALL);
+          if (
+            partial &&
+            typeof partial === "object" &&
+            !Array.isArray(partial)
+          ) {
+            // Cheap diff via stringify — only push when content changed.
+            const sig = JSON.stringify(partial);
+            if (sig !== lastPartialJson) {
+              lastPartialJson = sig;
+              onPartial(partial as Partial<FilledWidget>);
+            }
+          }
+        } catch {
+          // partial-json shouldn't throw on Allow.ALL but be defensive —
+          // a malformed chunk must never blow up the stream.
+        }
+      }
+
       logUsage(chunk);
     }
     pushLatency(startedAt);
 
+    // Final parse + validate. AJV is the gate that lets a widget transition
+    // from "streaming" → "ready" — partials never satisfy it.
     const parsed: unknown = JSON.parse(buf);
     const result = validateFill(slot.t, parsed);
     if (!result.ok) {
@@ -221,6 +268,65 @@ export function callFill(
       );
     }
     return parsed as FilledWidget;
+  }, signal);
+}
+
+// ── callFillToStore — owns the store push so Stage.tsx stays thin ─────
+// Wraps callFill with the streaming setWidget plumbing baked in. Stage's
+// fan-out only needs to know the slot key. Returns the final widget so
+// the caller can flip status → "ready" once AJV passes.
+export function callFillToStore(
+  slotKey: string,
+  slot: SlotMeta,
+  layout: OrchLayout,
+  text: string,
+  signal: AbortSignal
+): Promise<FilledWidget> {
+  const { setWidget } = useLS.getState();
+  return callFill(slot, layout, text, signal, (partial) => {
+    setWidget(slotKey, { status: "streaming", data: partial });
+  });
+}
+
+// ── Polish (ASR cleanup — side pipeline, does not push to HUD) ────────
+// Runs a cheap MINIMAL-thinking pass on the raw committed transcript so
+// that earlier misheard words can be revised once later context arrives
+// (e.g. "Moto mortgage rates" → "Model mortgage rates" once "rates" lands).
+//
+// This call is FIRE-AND-FORGET from the orchestration perspective: it runs
+// in parallel with the main orch/fill pipeline and only updates the display
+// transcript; it never influences widget generation.
+//
+// FUTURE: also feed polished phrase to handleUtterance for cleaner orch input.
+export function callPolish(rawText: string, signal: AbortSignal): Promise<string> {
+  return withRetry(async (sig) => {
+    const prompt =
+      `You are an ASR transcription cleaner. The following text is the raw output ` +
+      `of a Web Speech ASR engine listening to an English-speaking presenter. ` +
+      `There may be transcription errors — misheard words, run-together phrases, ` +
+      `missing punctuation. Output ONLY the most likely intended sentence, cleaned ` +
+      `and lightly punctuated. Do not add commentary. Do not change meaning. ` +
+      `Do not invent content that wasn't said.\n\nRaw: "${rawText}"\nCleaned:`;
+
+    const stream = await ai.models.generateContentStream({
+      model: MODEL,
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      config: {
+        abortSignal: sig,
+        thinkingConfig: { thinkingLevel: ThinkingLevel.MINIMAL },
+        responseMimeType: "text/plain",
+        maxOutputTokens: 200,
+        // NO `tools`. NO temperature/top_p/top_k.
+      },
+    });
+
+    let buf = "";
+    for await (const chunk of stream) {
+      buf += chunk.text ?? "";
+      // Intentionally NOT calling logUsage here — polish is a display-side
+      // helper; we don't want its usage numbers to overwrite the orch HUD metrics.
+    }
+    return buf.trim();
   }, signal);
 }
 
