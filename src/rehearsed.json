@@ -3,6 +3,7 @@
     "i": 0,
     "utterance": "Model the effect of interest rate on monthly mortgage payment",
     "scene": {
+      "intent": "fresh",
       "uid": "REHEARSED-00",
       "hero": 0,
       "slots": [
@@ -55,6 +56,7 @@
     "i": 1,
     "utterance": "Show GDP of South Korea and Japan from 2010 to 2024",
     "scene": {
+      "intent": "fresh",
       "uid": "REHEARSED-01",
       "hero": 0,
       "slots": [
@@ -101,6 +103,7 @@
     "i": 2,
     "utterance": "Compare 15-year versus 30-year fixed mortgage on rate, monthly payment, total interest, and flexibility",
     "scene": {
+      "intent": "fresh",
       "uid": "REHEARSED-02",
       "hero": 0,
       "slots": [
@@ -163,6 +166,7 @@
     "i": 3,
     "utterance": "Show how a request flows through cache and database in a read-heavy service",
     "scene": {
+      "intent": "fresh",
       "uid": "REHEARSED-03",
       "hero": 0,
       "slots": [
@@ -200,6 +204,7 @@
     "i": 4,
     "utterance": "Model compound interest over 30 years with a monthly contribution of $500",
     "scene": {
+      "intent": "fresh",
       "uid": "REHEARSED-04",
       "hero": 0,
       "slots": [
