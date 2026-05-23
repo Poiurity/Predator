@@ -78,8 +78,10 @@ function logUsage(chunk: GenerateContentResponse): void {
     prompt: u.promptTokenCount,
     cand: u.candidatesTokenCount,
   };
+  // info-level so the spec §10 cache-miss check is visible without
+  // toggling the verbose log filter in DevTools.
   // eslint-disable-next-line no-console
-  console.debug("[usage]", slice);
+  console.info("[usage]", slice);
   useLS.getState().setHud(slice);
 }
 
