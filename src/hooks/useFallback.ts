@@ -98,11 +98,15 @@ export async function runUtterance(
     return;
   }
 
+  // 4000ms gives the orchestrator a comfortable margin on cold start
+  // while still triggering fallback fast enough that the audience does not
+  // wait. (Spec §11 says 2500ms but assumed `live` resolved on first chunk;
+  // we restructured live to resolve on orch+commitScene, which is heavier.)
   try {
     await Promise.race([
       live(text, signal),
       new Promise<never>((_, rej) =>
-        setTimeout(() => rej(new Error("timeout-2500")), 2500)
+        setTimeout(() => rej(new Error("timeout-4000")), 4000)
       ),
     ]);
   } catch (e) {

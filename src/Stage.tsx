@@ -266,7 +266,15 @@ export function Stage() {
       controllerRef.current = controller;
       const { signal } = controller;
 
-      // live: the real Gemini path. runUtterance races this against 2500ms.
+      // live: the real Gemini path. runUtterance races this against the
+      // fallback timeout — so this MUST resolve as soon as the orchestrator
+      // returns and the scene shell is committed. Fan-out fills then paint
+      // independently in the background; per-slot errors are already
+      // isolated and do not require the orchestration await.
+      //
+      // If we awaited the full Promise.all(fills) here, the typical 3–8s
+      // fan-out latency would lose the timeout race on every utterance and
+      // the stage would replay rehearsed forever. (Observed bug.)
       const live = async (utterance: string, sig: AbortSignal): Promise<void> => {
         const uid = ulid();
 
@@ -307,9 +315,9 @@ export function Stage() {
           commitScene(safeLayout, seeds);
         });
 
-        // Fan-out fill: per-slot errors are isolated — one bad slot does not
-        // kill the scene and does NOT trigger fallback (spec §7.3).
-        await Promise.all(
+        // Fan-out fill: fire-and-forget. Per-slot errors are isolated and
+        // become Skeleton(error) in place; the scene survives.
+        void Promise.all(
           safeLayout.slots.map((slot, i) => {
             const key = `${uid}:${i}`;
             return callFill(slot, safeLayout, utterance, sig)

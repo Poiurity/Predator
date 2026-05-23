@@ -1,7 +1,7 @@
 // Tests for useFallback (spec §11 / §12 validation gate).
 //
 // Covers:
-//   - timeout-2500 path → announce + replay
+//   - timeout-4000 path → announce + replay
 //   - non-AbortError throw → announce + replay
 //   - AbortError → silent return, no fallback
 //   - already in fallbackMode → straight replay, no live attempt
@@ -76,15 +76,15 @@ function failingLive(err: Error) {
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 describe("runUtterance — timeout triggers fallback", () => {
-  it("calls announce and replay after 2500ms with no live chunk", async () => {
+  it("calls announce and replay after 4000ms with no live chunk", async () => {
     const promise = runUtterance(
       "test utterance",
       hangingLive(),
       new AbortController().signal
     );
 
-    // Advance past the 2500ms timeout.
-    await vi.advanceTimersByTimeAsync(2600);
+    // Advance past the 4000ms timeout.
+    await vi.advanceTimersByTimeAsync(4100);
     await promise;
 
     // TTS should have fired.
@@ -95,14 +95,14 @@ describe("runUtterance — timeout triggers fallback", () => {
     expect(useLS.getState().fallbackMode).toBe(true);
   });
 
-  it("does NOT trigger fallback if live resolves within 2500ms", async () => {
+  it("does NOT trigger fallback if live resolves within 4000ms", async () => {
     const promise = runUtterance(
       "fast utterance",
       slowLive(100),
       new AbortController().signal
     );
 
-    await vi.advanceTimersByTimeAsync(2600);
+    await vi.advanceTimersByTimeAsync(4100);
     await promise;
 
     expect(mockSpeak).not.toHaveBeenCalled();
