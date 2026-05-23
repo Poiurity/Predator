@@ -54,14 +54,24 @@ function computeLayout(nodes: FlowNode[], edges: FlowEdge[]): LayoutNode[] {
     if (!layer.has(n.id)) { queue.push(n.id); layer.set(n.id, 0); }
   }
 
+  // Cycle-safe BFS: cap layer at nodes.length so a cycle (A→B→A) cannot
+  // keep relaxing layers infinitely and explode the queue past 2^32. Also
+  // hard-cap iteration count as a belt-and-braces safety against a
+  // malformed graph (model can return self-edges or unreachable cycles).
+  const MAX_LAYER = nodes.length;
+  const MAX_ITER = nodes.length * nodes.length + edges.length + 16;
   let qi = 0;
-  while (qi < queue.length) {
+  let iter = 0;
+  while (qi < queue.length && iter++ < MAX_ITER) {
     const cur = queue[qi++]!;
     const curLayer = layer.get(cur) ?? 0;
+    if (curLayer >= MAX_LAYER) continue;
     for (const next of (outEdges.get(cur) ?? [])) {
+      if (next === cur) continue; // ignore self-edges
       const existing = layer.get(next) ?? -1;
-      if (curLayer + 1 > existing) {
-        layer.set(next, curLayer + 1);
+      const candidate = curLayer + 1;
+      if (candidate > existing && candidate <= MAX_LAYER) {
+        layer.set(next, candidate);
         queue.push(next);
       }
     }
@@ -76,8 +86,10 @@ function computeLayout(nodes: FlowNode[], edges: FlowEdge[]): LayoutNode[] {
 
   // Assign x/y for each node.
   const result: LayoutNode[] = [];
-  const maxPerLayer = Math.max(...Array.from(byLayer.values()).map((a) => a.length));
-  const totalW = maxPerLayer * NODE_W + (maxPerLayer - 1) * H_GAP;
+  // Guard Math.max(...[]) = -Infinity → NaN propagation. Empty graph: 1.
+  const lengths = Array.from(byLayer.values()).map((a) => a.length);
+  const maxPerLayer = lengths.length ? Math.max(...lengths) : 1;
+  const totalW = maxPerLayer * NODE_W + Math.max(0, maxPerLayer - 1) * H_GAP;
 
   for (const [l, ids] of Array.from(byLayer.entries()).sort(([a], [b]) => a - b)) {
     const rowW = ids.length * NODE_W + (ids.length - 1) * H_GAP;
