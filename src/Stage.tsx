@@ -38,6 +38,7 @@ import type { OrchLayout, OrchIntent, WidgetType, Pos, SlotMeta } from "./lib/sc
 import { callOrchestrator, callFill } from "./lib/gemini";
 import { runUtterance, resetFallback } from "./hooks/useFallback";
 import { useASR } from "./hooks/useASR";
+import { useTranscriptPolish } from "./hooks/useTranscriptPolish";
 import { Sim } from "./widgets/Sim";
 import { Plot } from "./widgets/Plot";
 import { Compare } from "./widgets/Compare";
@@ -191,6 +192,7 @@ export function Stage() {
   const scene = useLS((s) => s.scene);
   const widgets = useLS((s) => s.widgets);
   const transcript = useLS((s) => s.transcript);
+  const polishedTranscript = useLS((s) => s.polishedTranscript);
   const interimRaw = useLS((s) => s.interim);
   const fallbackMode = useLS((s) => s.fallbackMode);
   const lastIntent = useLS((s) => s.lastIntent);
@@ -201,6 +203,10 @@ export function Stage() {
 
   // Defer interim rendering so rapid ASR updates don't block the scene.
   const interim = useDeferredValue(interimRaw);
+
+  // Prefer the Gemini-polished transcript for display; fall back to raw ASR
+  // output while a polish call is in-flight or before enough text accumulates.
+  const displayTranscript = polishedTranscript || transcript;
 
   // orchControllerRef: aborted before each new orch call.
   // Fills get their OWN fresh AbortController per batch so add-mode fills
@@ -484,6 +490,10 @@ export function Stage() {
   // ── Wire ASR ──────────────────────────────────────────────────────────────
   useASR(handleUtterance, handlePreSpawn);
 
+  // ── Polish transcript (context-aware ASR correction, spec §8) ────────────
+  // Runs in parallel with the orch/fill pipeline — never blocks widget gen.
+  useTranscriptPolish();
+
   // ── Text input handler ────────────────────────────────────────────────────
   const handleTextSubmit = useCallback(
     (e: React.FormEvent<HTMLFormElement>) => {
@@ -565,12 +575,17 @@ export function Stage() {
         <button type="submit">Send</button>
       </form>
 
-      {/* Transcript footer — always visible, spec §8 */}
+      {/* Transcript footer — always visible, spec §8.
+          displayTranscript prefers the Gemini-polished version for context-
+          aware correction (e.g. "Moto mortgage rates" → "Model mortgage rates");
+          falls back to raw ASR transcript while polish is in-flight. */}
       <footer className="transcript" aria-live="polite">
-        {transcript && <span className="transcript-final">{transcript}</span>}
+        {displayTranscript && (
+          <span className="transcript-final">{displayTranscript}</span>
+        )}
         {interim && (
           <>
-            {transcript && <span className="transcript-sep"> · </span>}
+            {displayTranscript && <span className="transcript-sep"> · </span>}
             <span className="transcript-interim">{interim}</span>
           </>
         )}
