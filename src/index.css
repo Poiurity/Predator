@@ -96,6 +96,12 @@ html, body, #root {
   color: var(--fg-faint);
   letter-spacing: 0.06em;
   text-transform: uppercase;
+  transition: color 0.3s ease;
+}
+
+/* "live · growing" — additive phrase mode: accent the badge subtly */
+.stage-tag[data-intent="add"] {
+  color: rgba(122, 223, 255, 0.7);
 }
 
 /* ─── Scene area ───────────────────────────────────────────────────────── */
