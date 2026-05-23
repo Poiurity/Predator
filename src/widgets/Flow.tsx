@@ -213,7 +213,7 @@ function FlowInner({ title, data }: Props) {
                 fontSize={12}
                 fill="var(--fg)"
               >
-                {n.l.length > 14 ? n.l.slice(0, 13) + "…" : n.l}
+                {((n.l ?? "").length > 14 ? (n.l ?? "").slice(0, 13) + "…" : (n.l ?? ""))}
               </text>
             </g>
           ))}
