@@ -167,7 +167,7 @@ Expected output (schema = plot):
 // Vertex 4096-token floor. We pre-write the padding text so the lever
 // is a one-line change — and keeping it as a constant means PREFIX_SHA
 // changes deterministically when flipped, which is what we want.
-const ENABLE_PADDING_LEVER = false;
+const ENABLE_PADDING_LEVER = true;
 
 const PADDING_BLOCK = `# Reference padding — operating notes
 
