@@ -8,11 +8,20 @@
 import { create } from "zustand";
 import type { FilledWidget, OrchLayout, OrchIntent, SlotMeta } from "./lib/schemas";
 
-export type WidgetStatus = "skeleton" | "ready" | "error";
+// "streaming" is the in-flight state pushed by callFill on each chunk as the
+// model's JSON arrives. `data` is a Partial<FilledWidget> during this window —
+// widgets must render whatever shape they get (spec §9 / progressive growth).
+// AJV validation still happens on the FINAL parse in callFill, so a streamed
+// partial cannot violate the schema gate. ErrorBoundary catches the rare case
+// where a half-formed shape trips a render bug.
+export type WidgetStatus = "skeleton" | "streaming" | "ready" | "error";
 
 export interface WidgetState {
   status: WidgetStatus;
-  data?: FilledWidget;
+  // Full FilledWidget once status === "ready". May be a Partial<FilledWidget>
+  // during status === "streaming" (any subset of keys can be present, including
+  // a missing `t` discriminator before the model emits it).
+  data?: FilledWidget | Partial<FilledWidget>;
   error?: string;
 }
 
@@ -34,6 +43,12 @@ interface LivingStage {
   setInterim: (s: string) => void;
   appendFinal: (s: string) => void;
   clearTranscript: () => void;
+
+  // polishedTranscript: Gemini-cleaned version of the committed transcript.
+  // Updated asynchronously by useTranscriptPolish. Falls back to the raw
+  // transcript in the display layer when empty (first words or in-flight).
+  polishedTranscript: string;
+  setPolishedTranscript: (s: string) => void;
 
   // ── Scene + Widgets ──────────────────────────────────────────────
   scene: OrchLayout | null;
@@ -77,7 +92,10 @@ export const useLS = create<LivingStage>((set, get) => ({
       transcript: st.transcript ? `${st.transcript} ${s}` : s,
       interim: "",
     })),
-  clearTranscript: () => set({ transcript: "", interim: "" }),
+  clearTranscript: () => set({ transcript: "", interim: "", polishedTranscript: "" }),
+
+  polishedTranscript: "",
+  setPolishedTranscript: (s) => set({ polishedTranscript: s }),
 
   scene: null,
   widgets: {},
