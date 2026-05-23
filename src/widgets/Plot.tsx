@@ -187,12 +187,19 @@ function PlotInner({ title, data }: Props) {
 
 // Merge all series into a single recharts data array keyed by x.
 // If two series share the same x value they land on the same row.
+// Partial-streaming safety: a series may arrive without `pts` yet (`{n:"Korea"}`)
+// or with non-array `pts` from the partial parser — skip those entries until
+// the array materializes, never throw mid-render.
 function buildChartData(series: PlotWidget["data"]["series"]) {
   const map = new Map<number, Record<string, number>>();
   for (const s of series) {
-    for (const [x, y] of s.pts) {
+    if (!s || !Array.isArray(s.pts)) continue;
+    for (const pt of s.pts) {
+      if (!Array.isArray(pt) || pt.length < 2) continue;
+      const [x, y] = pt;
+      if (typeof x !== "number" || typeof y !== "number") continue;
       if (!map.has(x)) map.set(x, { x });
-      map.get(x)![s.n] = y;
+      map.get(x)![s.n ?? "series"] = y;
     }
   }
   return Array.from(map.values()).sort((a, b) => a.x - b.x);
