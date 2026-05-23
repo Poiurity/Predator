@@ -28,7 +28,7 @@
 
 ## ★ 반드시
 
-- `.env`+`.gitignore` **처음부터**. 키는 Cloudflare Worker secret으로만.
+- `.env`+`.gitignore` **처음부터**. 키는 Cloud Run 서비스 환경변수로만 (또는 Secret Manager).
 - 모든 Gemini 호출에 **503 지수 백오프 retry** (AbortController 통합 + 상한 4회).
 - Web Speech `onend` 재시작 루프 + **interim을 store에 누적**(인스턴스 밖, 재시작 생존).
 - 폴백 = **순서 인덱스** + 입(TTS)+배너 선고지. rehearsed.json에 Sim vars/rels/chart 포함.
@@ -62,7 +62,7 @@
 | `sim-engine-architect` | 정점 Sim 위젯 + MiniChart canvas + mathjs 샌드박스 | §4.2·§5·§6·§9 |
 | `gemini-ai-integrator` | Gemini SDK + 503 retry + AJV + 스트리밍 + 캐시 | §3.6·§4·§7·§10·§12 |
 | `voice-stage-coordinator` | Web Speech + interim store + AbortController + fan-out | §2·§7.3·§8 |
-| `cloudflare-security-guard` | Worker 프록시 + 키 차단 + .env/.gitignore + git grep | §3.2·§3.4·§15 |
+| `cloud-run-security-guard` | server.js 프록시 + Cloud Run 배포 + 키 차단 + git grep | §3.2·§3.4·§15 |
 | `fallback-resilience-curator` | 순서 인덱스 폴백 + rehearsed.json + announce | §11·§12 |
 | `stage-ui-designer` | Motion FLIP + 60fps + "슬라이드 소멸" 미감 | §9·§16 |
 | `submission-packager` | README + 1분 영상 + 제출폼(managed agents) + tag | §13·§14·§15·§17·§18 |
@@ -73,7 +73,7 @@
 
 | 시간 | 블록 | 핵심 산출물 |
 |---|---|---|
-| 09:00–10:30 | 셋업 | 임시계정·Worker 배포·Discord $5k 질문 |
+| 09:00–10:30 | 셋업 | 임시계정·Cloud Run 서비스·Discord $5k 질문 |
 | **10:30–11:30 H1** | **정점+503 먼저** | safe-math → retry → Sim E2E (MiniChart canvas) |
 | 11:30–12:30 H2 | 음성+성장 | Web Speech 재시작 + interim store + 3위젯 |
 | 12:30–13:00 | 점심 | — |
@@ -117,7 +117,7 @@ read-only 미러 → 보이스편집 → 4·5번째 위젯 → 성장 애니메 
 | `perf` | 성능 (60fps, 캐시 히트 등) |
 | `docs` | README, CLAUDE.md, 에이전트 프롬프트, 스펙 |
 | `chore` | deps, .env 템플릿, .gitignore, 기타 |
-| `build` | Vite/Wrangler/번들러 설정 |
+| `build` | Vite·Dockerfile·번들러 설정 |
 | `ci` | pre-push 훅, scan 스크립트, GH Actions |
 | `style` | 포맷 only (시각 디자인은 `feat(ui)`) |
 | `test` | 테스트 파일 |
@@ -129,7 +129,7 @@ read-only 미러 → 보이스편집 → 4·5번째 위젯 → 성장 애니메 
 | `sim` | Sim 위젯, MiniChart, safe-math |
 | `gemini` | Gemini SDK, retry, schemas, PREFIX |
 | `voice` | useASR, AbortController, handleUtterance |
-| `security` | Cloudflare Worker, .env, .gitignore, 키 처리 |
+| `security` | server.js, Cloud Run 배포, .env, .gitignore, 키 처리 |
 | `fallback` | rehearsed.json, useFallback, announce |
 | `ui` | Motion, 스타일링, 트랜스크립트, 디자인 토큰 |
 | `stage` | App/Stage 셸, Zustand store, 글루 코드 |
@@ -178,15 +178,20 @@ refactor(stage): extract handleUtterance into hooks/useStage
 # 키 누출 스캔 (push 전 항상)
 git grep -nE 'AIza[0-9A-Za-z_-]{20,}'
 
-# Worker 시크릿 등록 (한 번)
-cd worker && wrangler secret put GEMINI_API_KEY
+# Cloud Run 환경변수에 키 설정 (이미 했음. 변경 시:)
+gcloud run services update SERVICE \
+  --update-env-vars GEMINI_API_KEY=AIza... --region REGION
 
-# Worker 배포
-cd worker && wrangler deploy
+# 배포 (Dockerfile 자동 감지, --source . 로 Cloud Build 사용)
+npm run deploy
+# 또는: gcloud run deploy living-stage --source . --region us-central1 --allow-unauthenticated
+# 서비스/리전 커스터마이즈: CR_SERVICE=name CR_REGION=region npm run deploy
 
-# 로컬 dev
-npm run dev        # frontend
-cd worker && wrangler dev   # worker
+# 로컬 dev (두 터미널)
+npm run dev          # Vite :5173 (proxy /v1beta → :8080)
+node server.js       # proxy :8080 (GEMINI_API_KEY 환경변수 필요)
+# OR Cloud Run URL 에 직접 붙기:
+# VITE_DEV_PROXY=https://your-service.run.app npm run dev
 
 # 프리즈
 git tag submission && git push origin --tags
@@ -216,8 +221,10 @@ src/
   hud.tsx              ← §10 cachedContentTokenCount HUD
   PREFIX.ts            ← §10 캐시 프리픽스 (byte-stable, SHA 검증)
   rehearsed.json       ← §11 (H4 캡처, 순서 인덱스, Sim 데이터 포함)
-worker/
-  src/index.ts (또는 worker.js) ← §3.4 Cloudflare Worker 프록시
-  wrangler.toml
-  .dev.vars             ← gitignore. 로컬 GEMINI_API_KEY만.
+server.js              ← Cloud Run 단일 컨테이너: dist/ 정적 + /v1beta/* Gemini 프록시
+Dockerfile             ← multi-stage build (node:20-alpine)
+.dockerignore          ← node_modules·dist·tests·env 제외
+.gcloudignore          ← gcloud 업로드 컨텍스트 슬림화
 ```
+
+> **★ 배포 모델 변경 (2026-05-23):** 스펙 §3.4 의 Cloudflare Worker 안은 *대회측 요구사항으로* Cloud Run 단일 컨테이너로 대체됨. 같은 origin → CORS 불필요. server.js 가 `dist/` 와 `/v1beta/*` 프록시를 동시에 서빙. `GEMINI_API_KEY` 는 Cloud Run 서비스 env vars 에만 존재(이 레포에 없음).

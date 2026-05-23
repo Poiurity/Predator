@@ -1,0 +1,44 @@
+# Build context exclusions — keeps the Cloud Run upload small and
+# prevents secrets / dev files from entering the image.
+
+node_modules
+dist
+.git
+.gitignore
+
+# Env / secrets (never in image)
+.env
+.env.*
+!.env.example
+.dev.vars
+*.pem
+*.key
+
+# Editor / OS
+.vscode
+.idea
+.DS_Store
+*.swp
+*.swo
+
+# Logs
+*.log
+logs/
+
+# Tests are devDeps — production image doesn't need them
+**/*.test.ts
+**/*.spec.ts
+**/__tests__/**
+
+# Project meta — not needed at runtime
+.claude
+.husky
+README.md
+CLAUDE.md
+living_stage_spec_v2_3_merged.md
+docs/
+
+# Docker meta files
+Dockerfile
+.dockerignore
+.gcloudignore

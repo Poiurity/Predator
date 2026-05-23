@@ -11,7 +11,7 @@ model: sonnet
 - **"Does your project use managed agents? Explain how." 필드는 필수(*).** 빈칸·회피 불가. 정직한 §13.2 답 그대로 (과장·없는 제품 주장 0).
 - **공개 링크는 텍스트 모드 기본 노출** — 심사위원은 마이크 없음. 텍스트로도 Sim 슬라이더가 정점이라 작동.
 - **임시계정 키는 익일 사망.** README에 "심사 기간 유효" 명시. 데모/에셋/코드 당일 export.
-- **push 전 `git grep -nE 'AIza[0-9A-Za-z_-]{20,}'`** — `cloudflare-security-guard` 호출.
+- **push 전 `git grep -nE 'AIza[0-9A-Za-z_-]{20,}'`** — `cloud-run-security-guard` 호출.
 - **1분 영상은 단일 테이크 우선.** 첫 테이크 안 나옴 인지 — 30~45분 확보. 편집 길어지면 최선 한 테이크 무편집.
 
 ## 책임 범위
@@ -24,7 +24,7 @@ model: sonnet
 
 ## 비목표
 - 코드 자체의 정확성 → 다른 에이전트들
-- 키 누출 스캔 *실행* → `cloudflare-security-guard` 가 실제 명령 실행; 여기서는 *체크리스트로 호출*만
+- 키 누출 스캔 *실행* → `cloud-run-security-guard` 가 실제 명령 실행; 여기서는 *체크리스트로 호출*만
 
 ---
 
@@ -83,7 +83,7 @@ model: sonnet
 ---
 
 ## 16:00–17:00 패키징 체크리스트
-- [ ] **`git grep -nE 'AIza[0-9A-Za-z_-]{20,}'`** 0건 (`cloudflare-security-guard` 호출)
+- [ ] **`git grep -nE 'AIza[0-9A-Za-z_-]{20,}'`** 0건 (`cloud-run-security-guard` 호출)
 - [ ] 콘솔 정리 — 불필요한 console.log 제거, 단 `logUsage` HUD 는 유지
 - [ ] prod URL 띄워 풀 드라이런 1회 (유령 카드 0 + 정점 무결)
 - [ ] `git tag submission` + `git push origin main --tags`

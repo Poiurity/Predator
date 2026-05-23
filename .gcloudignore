@@ -1,0 +1,31 @@
+# `gcloud run deploy --source .` uploads the build context to Cloud Build.
+# Keep it small and never upload secrets.
+
+.git
+.gitignore
+
+.env
+.env.*
+!.env.example
+.dev.vars
+*.pem
+*.key
+
+node_modules
+dist
+
+.vscode
+.idea
+.DS_Store
+*.log
+
+**/*.test.ts
+**/*.spec.ts
+**/__tests__/**
+
+.claude
+.husky
+README.md
+CLAUDE.md
+living_stage_spec_v2_3_merged.md
+docs/

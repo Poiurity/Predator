@@ -14,11 +14,11 @@ model: opus
 - **`temperature`/`top_p`/`top_k` 전송 금지.** 3.x 기본값. 낮추면 루프/성능 저하.
 - **503 retry 4회 상한 + 지터.** 무한 재시도 = 임시계정 남용 조항(실격+밴) 위반.
 - 모든 호출은 **`AbortController.signal`** 통과. 매 시도 전 `signal.aborted` 체크.
-- 키는 코드에 없다. **`baseUrl = VITE_WORKER_URL`** 로 Cloudflare Worker 경유만.
+- 키는 코드에 없다. **`baseUrl = window.location.origin`** 로 same-origin Cloud Run server.js 경유만 (대회 요구사항으로 Cloudflare Worker → Cloud Run 단일 컨테이너로 대체됨).
 
 ## 책임 범위
 1. **`src/lib/retry.ts`** — `withRetry<T>(fn, signal, {max:4, base:400})`. TRANSIENT = `{429,500,502,503,504}`, 메시지 정규식 `/overwhelmed|UNAVAILABLE|503/i`, 매 시도 전 `signal.aborted` 체크하여 `DOMException("aborted","AbortError")`.
-2. **`src/lib/gemini.ts`** — `callOrchestrator`, `callFill`, `logUsage`. `GoogleGenAI({ httpOptions: { baseUrl: VITE_WORKER_URL } })`.
+2. **`src/lib/gemini.ts`** — `callOrchestrator`, `callFill`, `logUsage`. `GoogleGenAI({ httpOptions: { baseUrl: window.location.origin } })` (same-origin Cloud Run).
 3. **`src/lib/schemas.ts`** — `ORCH_SCHEMA`(propertyOrdering: hero·slots·uid), `SIM_SCHEMA`(Sim 부분은 `sim-engine-architect`와 합치 — 변경 시 협의), `fillSchema(t)` for plot/compare/flow/annotate, AJV 컴파일 인스턴스 (`ajvOrch`, etc.).
 4. **`src/PREFIX.ts`** — byte-stable 프리픽스 ~2500토큰 1차 (시스템 스펙 + 위젯 카탈로그 5종 + 레이아웃 DSL + reactive 문법 + few-shot 2개/역할 + 스타일 토큰 + 패딩). silent-miss(`cachedContentTokenCount==0`) 시 4500토큰까지 즉시 bump.
 5. **`handleUtterance` 오케스트레이션 부분** (orch → AJV → fan-out fill의 *호출 부분*. 음성 트리거는 `voice-stage-coordinator`가 호출).
@@ -26,7 +26,7 @@ model: opus
 
 ## 비목표
 - Sim 내부 expr 컴파일/평가 → `sim-engine-architect`
-- Worker 프록시 자체 구현 → `cloudflare-security-guard`
+- Cloud Run server.js 프록시 자체 → `cloud-run-security-guard`
 - ASR / AbortController **생성 위치** → `voice-stage-coordinator` (`controllerRef.current?.abort` 후 새 인스턴스)
 - 폴백 분기 / announce → `fallback-resilience-curator`
 - HUD UI 자체 디자인 → `stage-ui-designer`
@@ -70,7 +70,7 @@ export async function withRetry<T>(
 
 ```ts
 // gemini.ts (orchestrator — hero 정규식 매치로 셸 즉시 페인트)
-const ai = new GoogleGenAI({ httpOptions: { baseUrl: import.meta.env.VITE_WORKER_URL } });
+const ai = new GoogleGenAI({ httpOptions: { baseUrl: window.location.origin } });  // same-origin Cloud Run
 const MODEL = "gemini-3.5-flash";   // ⚠️ NOT gemini-3-flash-preview
 
 const stream = await ai.models.generateContentStream({
@@ -115,7 +115,7 @@ return JSON.parse(buf);
 - [ ] Sim fill에 `v0` 키만 (Sim 스키마는 `sim-engine-architect` 와 합치)
 
 ## 자주 빠지는 함정
-- 키를 `VITE_GEMINI_API_KEY` 같은 변수에 → Vite 가 브라우저 번들에 박음 → **즉사**. 키는 Worker secret만.
+- 키를 `VITE_GEMINI_API_KEY` 같은 변수에 → Vite 가 브라우저 번들에 박음 → **즉사**. 키는 Cloud Run 서비스 env vars (또는 Secret Manager) 에만.
 - `tools: []` 빈 배열 전달 → silent miss. 키 자체를 빼라.
 - maxOutputTokens 누락 → 응답 잘려 JSON.parse 실패.
 - retry 메시지 정규식이 `503` 만 잡아 `UNAVAILABLE` 놓침 → 둘 다 OR.
