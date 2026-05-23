@@ -1,9 +1,10 @@
 // Web Speech ASR hook (spec §8).
 //
 // Owns the SpeechRecognition lifecycle: continuous capture, interim
-// accumulation in the Zustand store (survives onend/restart), 700ms
-// silence flush, sentence-end punctuation flush, per-kind keyword
-// pre-spawn throttling, and the mandatory onend restart loop.
+// accumulation in the Zustand store (survives onend/restart), phrase-level
+// flush on conjunctions/punctuation + 300ms silence, sentence-end punctuation
+// flush, per-kind keyword pre-spawn throttling, and the mandatory onend
+// restart loop.
 //
 // Hard rules from spec §8 echoed here for the next reader:
 //   - rec.onend must restart if !stopped — 30s silence kills the mic otherwise.
@@ -11,6 +12,13 @@
 //     does not lose accumulated text.
 //   - onerror ignores no-speech / aborted / network (all benign).
 //   - Cleanup: stopped=true + rec.onend=null + rec.stop() to avoid ghost loop.
+//
+// Phrase-boundary triggering (incremental growth, not one-shot per sentence):
+//   - Silence threshold: 300ms (down from 700ms).
+//   - Additional fire points: commas, semicolons, colons, and conjunctions
+//     (and|then|also|plus|now|but|so) after ≥3 new words accumulated.
+//   - De-dup: lastFiredText ref prevents the same text firing twice within 100ms
+//     (covers the overlap between silence timer and conjunction match).
 
 import { useEffect, useRef } from "react";
 import { useLS } from "../store";
@@ -24,6 +32,19 @@ const KW: [RegExp, WidgetType][] = [
   [/\b(flow|diagram|step|process|흐름|단계)\b/i, "flow"],
   [/\b(note|highlight|주석|강조)\b/i, "annotate"],
 ];
+
+// Phrase boundary: inline punctuation that signals end-of-clause mid-sentence.
+const PHRASE_PUNCT = /[,;:]/;
+
+// Conjunction regex for mid-stream phrase splitting. Fires only after ≥3 new
+// words have accumulated since the last fire (prevents trigger on "and" alone
+// in "and then we simulate").
+const CONJUNCTION_RE = /\b(and|then|also|plus|now|but|so)\b/i;
+
+// Count whitespace-delimited words in a string.
+function wordCount(s: string): number {
+  return s.trim() === "" ? 0 : s.trim().split(/\s+/).length;
+}
 
 // Throttle pre-spawn per kind: same kind cannot fire twice within 500ms.
 type KindTimestamps = Partial<Record<WidgetType, number>>;
@@ -41,6 +62,15 @@ export function useASR(
 
   const silenceTimer = useRef<number | null>(null);
   const kindTimestamps = useRef<KindTimestamps>({});
+
+  // Phrase-level de-dup state:
+  //   lastFiredText — the trimmed text of the most recently fired phrase.
+  //   lastFiredAt   — timestamp of that fire (ms).
+  //   wordsSinceLastFire — accumulated word count since the last phrase fire;
+  //     used to gate conjunction triggers (must have ≥3 new words).
+  const lastFiredText = useRef<string>("");
+  const lastFiredAt = useRef<number>(0);
+  const wordsSinceLastFire = useRef<number>(0);
 
   useEffect(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -67,14 +97,26 @@ export function useASR(
 
     let stopped = false;
 
-    // flush: trim, guard empty, clear silence timer, push to store + fire onFinal.
+    // flush: trim, guard empty, guard de-dup (same text within 100ms),
+    // clear silence timer, push to store + fire onFinal.
+    // Does NOT clear interim from the store — continued speech accumulates.
     const flush = (t: string): void => {
       const x = t.trim();
       if (!x) return;
+
+      // De-dup guard: don't fire the same phrase twice within 100ms.
+      const now = Date.now();
+      if (x === lastFiredText.current && now - lastFiredAt.current < 100) return;
+
       if (silenceTimer.current !== null) {
         clearTimeout(silenceTimer.current);
         silenceTimer.current = null;
       }
+
+      lastFiredText.current = x;
+      lastFiredAt.current = now;
+      wordsSinceLastFire.current = 0;
+
       appendFinal(x);
       onFinalRef.current(x);
     };
@@ -110,17 +152,58 @@ export function useASR(
             break; // only one kind per interim burst
           }
         }
-      }
 
-      if (final) {
-        flush(final);
-      } else if (interim) {
-        // Arm/reset 700ms silence flush on every interim chunk.
+        // ── Phrase-boundary detection ────────────────────────────────
+        // Track how many new words accumulated in this interim chunk.
+        // We compare against the last fired text to find the "new" part.
+        const newPart = interim.startsWith(lastFiredText.current)
+          ? interim.slice(lastFiredText.current.length)
+          : interim;
+        wordsSinceLastFire.current = wordCount(newPart);
+
+        // 1. Inline punctuation: fire immediately on comma/semicolon/colon.
+        if (PHRASE_PUNCT.test(interim)) {
+          flush(interim);
+          // Arm 300ms timer for anything that comes after.
+          if (silenceTimer.current !== null) clearTimeout(silenceTimer.current);
+          silenceTimer.current = window.setTimeout(() => {
+            silenceTimer.current = null;
+            flush(useLS.getState().interim);
+          }, 300);
+          return;
+        }
+
+        // 2. Conjunction trigger: only when ≥3 new words have accumulated
+        //    since the last fire, to avoid false-positives on partial phrases.
+        if (
+          wordsSinceLastFire.current >= 3 &&
+          CONJUNCTION_RE.test(interim)
+        ) {
+          // Flush up to (but not including) the conjunction itself so the
+          // presenter hears "Simulation..." and then "...and now the chart"
+          // as separate utterances. In practice we just flush the full interim —
+          // the conjunction is part of the next phrase's context for Gemini.
+          flush(interim);
+          if (silenceTimer.current !== null) clearTimeout(silenceTimer.current);
+          silenceTimer.current = window.setTimeout(() => {
+            silenceTimer.current = null;
+            flush(useLS.getState().interim);
+          }, 300);
+          return;
+        }
+
+        // 3. Arm/reset 300ms silence flush on every interim chunk that didn't
+        //    already trigger a phrase boundary above.
         if (silenceTimer.current !== null) clearTimeout(silenceTimer.current);
         silenceTimer.current = window.setTimeout(() => {
           silenceTimer.current = null;
-          flush(interim);
-        }, 700);
+          flush(useLS.getState().interim);
+        }, 300);
+      }
+
+      if (final) {
+        // True sentence-final result from the browser engine — flush immediately.
+        flush(final);
       }
     };
 
